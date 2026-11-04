@@ -23,3 +23,8 @@ Data BTC dan 11 alt default, regime Reader, volume gate dan risk default, saldo 
 - Temuan ini review statis; T-H1/T-H2 masih di worktree Hermes yang aktif dan tidak diubah oleh Codex. Hasil validasi belum diklaim.
 
 Tidak ada order live/testnet, pembacaan .env, perubahan arm/mode, atau penggunaan holdout. Semua strategi tetap NO-GO.
+
+## Review tambahan validator Hermes (statis, commit 6e312ca)
+- Rules.md G-02 meminta IS >= 100, VAL >= 60, HOLDOUT >= 40. Runner memeriksa >= 60 pada jendela base gabungan default 2025-02-01 s.d. 2026-05-01; cabang holdout G-11 tidak memeriksa minimum 40 trade. Kekurangan data seharusnya INCONCLUSIVE.
+- G-03, G-04 dan G-07 dinilai dari hasil base jendela gabungan, padahal Rules.md menyebut VAL. G-09 memakai ekspektansi FIT, padahal Rules.md menyebut VAL. Label PASS dari runner ini belum membuktikan terpenuhinya aturan.
+- Output validator tetap NO-GO; tidak ada status strategi yang diubah. Temuan dikirim ke Hermes, pemilik branch, tanpa mengedit worktree mereka. Angka Hermes berasal dari branch sebelum perubahan strategi Codex dan bukan hasil gabungan terbaru.
