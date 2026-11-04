@@ -398,6 +398,12 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
     let equity = mgr.ex.wallet_balance().await.unwrap_or(cfg.risk.start_balance_usd);
     println!("{} regime={} long_ok={} short_ok={} max_pos={} equity=${:.2} open={} pending={}", fmt_utc(now), dec.state.as_str(), dec.long_ok, dec.short_ok, dec.max_positions, equity, mgr.open_count(), mgr.pending_count());
     for (sym, m15, h1) in &snap.syms {
+        // Replay missed closed bars too, for pending orders surviving a delayed cycle or restart.
+        if let Some(created) = mgr.trade_on(sym).map(|t| t.created_ms) {
+            for bar in m15.iter().filter(|bar| bar.open_time + Tf::M15.ms() > created) {
+                mgr.on_closed_price(sym, to_dec(bar.close), bar.open_time + Tf::M15.ms()).await?;
+            }
+        }
         let Some(f) = meta.filters.get(sym).cloned() else { continue };
         if !meta.allow.contains(sym) {
             continue;
@@ -439,7 +445,7 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind: sig.kind, filters: &f, risk: &cfg.risk };
             match mgr.book.risk.evaluate_entry(&ctx, &inp, &cfg.risk) {
                 Ok(sz) => {
-                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms: sig.ttl_bars as i64 * Tf::M15.ms() };
+                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms: sig.ttl_bars as i64 * Tf::M15.ms(), cancel_beyond: sig.cancel_beyond.map(to_dec) };
                     match mgr.submit(it, now).await {
                         Ok(cid) => println!("  ENTRY {} {} {:?} cid={cid}", sig.strategy.code(), sym, sig.side),
                         Err(e) => println!("  entry {} {} ditolak: {e}", sig.strategy.code(), sym),

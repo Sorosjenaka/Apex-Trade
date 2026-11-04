@@ -38,7 +38,7 @@ fn intent(side: Side, entry: Decimal, sl: Decimal, kind: EntryKind) -> EntryInte
     let f = filters()["ETHUSDT"].clone();
     let rc = RiskConfig::default();
     let sizing = size_order(&SizingInput { side, entry, sl, kind, filters: &f, risk: &rc }).unwrap();
-    EntryIntent { symbol: "ETHUSDT".into(), strategy: "S1".into(), sizing, kind, ttl_ms: 3_600_000 }
+    EntryIntent { symbol: "ETHUSDT".into(), strategy: "S1".into(), sizing, kind, ttl_ms: 3_600_000, cancel_beyond: None }
 }
 
 async fn pump(m: &mut OrderManager<MockExchange>, now: i64) {
@@ -278,4 +278,61 @@ fn non_paper_requires_arm() {
     let cfg = EngineConfig { mode: apex_core::Mode::Testnet, arm: false, ..Default::default() };
     let r = OrderManager::new(MockExchange::new(60.0), ExecMode::Testnet, cfg, RiskConfig::default(), StateStore::memory(), AuditLog::in_memory(), filters());
     assert!(r.is_err());
+}
+
+#[tokio::test]
+async fn cancel_beyond_uses_closed_bar_and_preserves_fills() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2510), T0);
+    let mut m = mgr("cancel-beyond", ex, OrphanPolicy::PlaceSl);
+    let mut it = intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker);
+    it.cancel_beyond = Some(dec!(2490));
+    let cid = m.submit(it, T0).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2480), T0).await.unwrap();
+    assert!(m.book.trades.contains_key(&cid));
+    m.on_closed_price("ETHUSDT", dec!(2490), T0 + 1).await.unwrap();
+    assert!(m.book.trades.contains_key(&cid));
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2).await.unwrap();
+    assert!(!m.book.trades.contains_key(&cid));
+    let mut it = intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker);
+    it.cancel_beyond = Some(dec!(2490));
+    let cid = m.submit(it, T0 + 3).await.unwrap();
+    m.ex.set_price("ETHUSDT", dec!(2499), T0 + 4);
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 5).await.unwrap();
+    assert_eq!(m.book.trades[&cid].state, TradeState::Open);
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+}
+
+#[tokio::test]
+async fn cancel_beyond_short_and_other_symbol() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2490), T0);
+    let mut m = mgr("cancel-beyond-short", ex, OrphanPolicy::PlaceSl);
+    let mut it = intent(Side::Short, dec!(2500), dec!(2560), EntryKind::LimitMaker);
+    it.cancel_beyond = Some(dec!(2510));
+    let cid = m.submit(it, T0).await.unwrap();
+    m.on_closed_price("BTCUSDT", dec!(2520), T0 + 1).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2510), T0 + 1).await.unwrap();
+    assert!(m.book.trades.contains_key(&cid));
+    m.on_closed_price("ETHUSDT", dec!(2520), T0 + 2).await.unwrap();
+    assert!(!m.book.trades.contains_key(&cid));
+}
+
+#[tokio::test]
+async fn cancel_beyond_cancels_unfilled_remainder_of_partial_entry() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2510), T0);
+    let mut m = mgr("cancel-beyond-partial", ex, OrphanPolicy::PlaceSl);
+    let mut it = intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker);
+    it.cancel_beyond = Some(dec!(2490));
+    let qty = it.sizing.qty / dec!(2);
+    let cid = m.submit(it, T0).await.unwrap();
+    m.ex.partial_fill(&cid, qty, T0 + 1);
+    pump(&mut m, T0 + 1).await;
+    assert_eq!(m.book.trades[&cid].state, TradeState::Open);
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2).await.unwrap();
+    assert_eq!(m.book.trades[&cid].filled_qty, qty);
+    assert!(m.book.trades[&cid].entry_final);
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+    assert!(m.ex.calls().iter().any(|c| c == &format!("cancel {cid}")));
 }
