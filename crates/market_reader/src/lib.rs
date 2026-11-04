@@ -4,6 +4,6 @@ pub mod aggregate;
 pub mod readers;
 pub mod source;
 
-pub use aggregate::{RegimeDecision, RegimeMachine, RegimeState, UniverseScope};
+pub use aggregate::{ChopThresholds, RegimeDecision, RegimeMachine, RegimeState, UniverseScope};
 pub use readers::*;
 pub use source::{DomSource, SourceSelector, TvSnapshot};

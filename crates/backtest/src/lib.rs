@@ -9,11 +9,15 @@
 //!    MARKET dieksekusi di open bar berikutnya (+slip, fee taker).
 pub mod context;
 pub mod engine;
+pub mod gates;
 pub mod stats;
 
 pub use context::{RegimeMode, RegimeTimeline};
 pub use engine::{run_backtest, screener_states, BacktestConfig, BacktestReport, MarketInput, SymbolInput, Trade};
-pub use stats::{dsr, monte_carlo, psr, Metrics, MonteCarlo};
+pub use gates::{
+    adopt_threshold, anchored_folds, chop_block_rate, count_strategy_trials, dsr_variance, g02_pass, g03_pass, g04_pass, g05_pass, g07_pass, g08_pass, g10_pass, g11_pass, honest_n_trials, non_trade_rate, plateau_gate, select_plateau, trades_per_year, walk_forward_gate, AnchoredFold, PlateauChoice, PlateauGate, SweepPoint, WfGate,
+};
+pub use stats::{dsr, monte_carlo, psr, sample_variance, sharpe_ratio, Metrics, MonteCarlo};
 
 use apex_core::types::Ms;
 
@@ -33,6 +37,14 @@ pub fn param_hash(v: &serde_json::Value) -> String {
     hex::encode(Sha256::digest(v.to_string().as_bytes()))[..16].to_string()
 }
 
+/// Cocokkan field JSON `param_hash` persis. Substring `"abc"` tidak boleh menolak hash `"abcdef…"`.
+fn ledger_line_has_hash(line: &str, hash: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    v.get("param_hash").and_then(|h| h.as_str()) == Some(hash)
+}
+
 /// Kunci holdout: tolak tanpa `unlock`; tolak bila hash parameter yang sama sudah pernah dijalankan di holdout.
 pub fn holdout_guard(start: Ms, end: Ms, unlock: bool, hash: &str, ledger: &std::path::Path) -> anyhow::Result<bool> {
     if !overlaps_holdout(start, end) {
@@ -42,7 +54,7 @@ pub fn holdout_guard(start: Ms, end: Ms, unlock: bool, hash: &str, ledger: &std:
         anyhow::bail!("rentang menyentuh HOLDOUT terkunci {HOLDOUT_START}..2026-10-31. Pakai --unlock-holdout (sekali jalan per versi parameter, G-11).");
     }
     if let Ok(s) = std::fs::read_to_string(ledger) {
-        if s.lines().any(|l| l.contains(&format!("\"param_hash\":\"{hash}\""))) {
+        if s.lines().any(|l| ledger_line_has_hash(l, hash)) {
             anyhow::bail!("holdout sudah pernah dijalankan untuk param_hash {hash} — G-11 sekali jalan; ditolak.");
         }
     }
@@ -63,6 +75,12 @@ mod tests {
         let p = std::env::temp_dir().join(format!("apex_hl_{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&p);
         assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), false, "abc", &p).is_err());
+        assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).unwrap());
+        std::fs::write(
+            &p,
+            "{\"param_hash\":\"abcdef1234567890\"}\n{\"note\":\"abc\",\"param_hash\":\"other\"}\nnot-json abc\n",
+        )
+        .unwrap();
         assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).unwrap());
         std::fs::write(&p, "{\"param_hash\":\"abc\"}\n").unwrap();
         assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).is_err());

@@ -6,7 +6,7 @@ use apex_core::types::{Bar, Ms, Tf};
 use apex_indicators as ind;
 use apex_market_reader::aggregate::ReaderSnapshot;
 use apex_market_reader::readers::{chg24, dir_from_chg, last_closed, shock_proxy_15m, CrowdFlags, TrendFeatures};
-use apex_market_reader::{RegimeDecision, RegimeMachine, RegimeState, UniverseScope};
+use apex_market_reader::{ChopThresholds, RegimeDecision, RegimeMachine, RegimeState, UniverseScope};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ struct AltFeat {
 
 impl RegimeTimeline {
     /// `close_times`: waktu close bar 15m (as_of) berurutan. `cap_on_proxy`: terapkan aturan TV-06 (max_pos=1) karena sumber cadangan.
-    pub fn build(btc_m15: &[Bar], btc_h1: &[Bar], dom_h1: Option<&[Bar]>, alts: &[AltInput], close_times: &[Ms], cap_on_proxy: bool) -> RegimeTimeline {
+    pub fn build(btc_m15: &[Bar], btc_h1: &[Bar], dom_h1: Option<&[Bar]>, alts: &[AltInput], close_times: &[Ms], cap_on_proxy: bool, chop: ChopThresholds) -> RegimeTimeline {
         let tf = TrendFeatures::compute(btc_h1, btc_m15);
         let alt: Vec<AltFeat> = alts
             .iter()
@@ -47,7 +47,7 @@ impl RegimeTimeline {
         let dom_ot: Vec<Ms> = dom_h1.map(|d| d.iter().map(|b| b.open_time).collect()).unwrap_or_default();
         let dom_c: Vec<f64> = dom_h1.map(ind::closes).unwrap_or_default();
         let btc15_ot: Vec<Ms> = btc_m15.iter().map(|b| b.open_time).collect();
-        let mut m = RegimeMachine::default();
+        let mut m = RegimeMachine { chop, ..RegimeMachine::default() };
         let mut decisions = Vec::with_capacity(close_times.len());
         for &as_of in close_times {
             let mut reasons = Vec::new();
