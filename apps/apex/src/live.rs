@@ -477,6 +477,23 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
                 equity,
                 spread_bps: gm.spread_bps,
             };
+            let features = if sig.strategy == apex_strategies::StrategyId::S5Rmp {
+                let ss = if sig.side == apex_core::types::Side::Long { &series.long } else { &series.short };
+                apex_strategies::knn::features_at(ss, t)
+            } else { None };
+            if sig.strategy == apex_strategies::StrategyId::S5Rmp && cfg.strategies.params.s5_knn_enabled {
+                let samples: Vec<_> = mgr.book.closed.iter().filter_map(|trade| {
+                    if trade.strategy != apex_strategies::StrategyId::S5Rmp.code() { return None; }
+                    let pnl = trade.pnl_net?;
+                    if !pnl.is_finite() { return None; }
+                    Some(apex_strategies::knn::LabeledSample {
+                        features: trade.knn_features?, signal_ms: trade.knn_signal_ms?,
+                        closed_ms: trade.closed_ms?, win: pnl > 0.0,
+                    })
+                }).collect();
+                let grade = features.and_then(|f| apex_strategies::knn::grade(&samples, f, sig.bar_close_ms));
+                if !grade.is_some_and(|g| g.pass) { skip("S5_KNN_REJECTED_OR_UNAVAILABLE"); continue; }
+            }
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind: sig.kind, filters: &f, risk: &cfg.risk };
             match mgr.book.risk.evaluate_entry(&ctx, &inp, &cfg.risk) {
                 Ok(sz) => {
@@ -495,7 +512,7 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
                         ttl_ms = ttl_ms.saturating_sub((now - sig.bar_close_ms).max(0));
                         if ttl_ms <= 0 { skip("OFCC_EXPIRED"); continue; }
                     }
-                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms, cancel_beyond: sig.cancel_beyond.map(to_dec) };
+                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms, cancel_beyond: sig.cancel_beyond.map(to_dec), knn_features: features, knn_signal_ms: features.map(|_| sig.bar_close_ms) };
                     match mgr.submit(it, now).await {
                         Ok(cid) => println!("  ENTRY {} {} {:?} cid={cid}", sig.strategy.code(), sym, sig.side),
                         Err(e) => println!("  entry {} {} ditolak: {e}", sig.strategy.code(), sym),

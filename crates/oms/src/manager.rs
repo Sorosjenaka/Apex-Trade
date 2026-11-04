@@ -52,6 +52,10 @@ pub struct ManagedTrade {
     pub cancel_beyond: Option<Decimal>,
     #[serde(default)]
     pub entry_final: bool,
+    #[serde(default)]
+    pub knn_features: Option<[f64; 5]>,
+    #[serde(default)]
+    pub knn_signal_ms: Option<Ms>,
     pub filled_ms: Option<Ms>,
     pub closed_ms: Option<Ms>,
     pub exit_price: Option<Decimal>,
@@ -93,6 +97,8 @@ pub struct EntryIntent {
     pub kind: EntryKind,
     pub ttl_ms: i64,
     pub cancel_beyond: Option<Decimal>,
+    pub knn_features: Option<[f64; 5]>,
+    pub knn_signal_ms: Option<Ms>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -250,6 +256,8 @@ impl<E: FuturesExchange> OrderManager<E> {
             expires_ms: now + it.ttl_ms,
             cancel_beyond: it.cancel_beyond,
             entry_final: false,
+            knn_features: it.knn_features,
+            knn_signal_ms: it.knn_signal_ms,
             filled_ms: None,
             closed_ms: None,
             exit_price: None,
@@ -707,6 +715,8 @@ impl<E: FuturesExchange> OrderManager<E> {
                         expires_ms: now,
                         cancel_beyond: None,
                         entry_final: true,
+                        knn_features: None,
+                        knn_signal_ms: None,
                         filled_ms: Some(now),
                         closed_ms: None,
                         exit_price: None,

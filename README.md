@@ -87,6 +87,10 @@ Hasil backtest → `reports\bt_*.json` + `*.trades.csv`; setiap run dicatat di `
 - Kill switch berbasis file (`state/KILL`), audit log JSONL (`state/<mode>/audit.jsonl`), state `state/<mode>/oms_state.json`.
 - `MockExchange` mengimplementasikan trait yang sama → dipakai untuk paper & 16 tes state machine.
 
+## Varian S5 kNN
+
+Varian K bersifat opsional dan default `s5_knn_enabled = false`. Bila diaktifkan dalam `[params]`, S5 memerlukan 15 tetangga dengan label yang sudah tutup sebelum waktu sinyal; kurang data berarti skip. Backtest melatih awal lewat replay S5 pada data sebelum awal periode yang diuji, lalu menambah hanya trade OOS yang sudah tutup. Trade penutupan paksa di akhir data tidak menjadi label. Replay pelatihan ditolak bila rentangnya beririsan dengan holdout terkunci. Latih awal memakai biaya dasar juga pada uji stres; label trade OOS yang kemudian masuk tetap memakai biaya skenario tersebut, sehingga urutan sinyal dapat berbeda antar skenario. Engine memakai riwayat trade S5 yang tertutup dan memiliki fitur tersimpan dalam state OMS; riwayat lama tanpa fitur dilewati. Bila varian K diaktifkan saat riwayat belum cukup, semua sinyal S5 akan di-skip; riwayat dapat dikumpulkan di paper dengan varian K nonaktif sebelum penilaian. Versi ini belum membuktikan parity terhadap Pine atau keuntungan strategi.
+
 ## Batasan yang perlu Anda tahu
 - Strategi adalah **proxy** dari Pine (lihat CHANGELOG); belum ada yang lolos gate → semua NO-GO.
 - Regime backtest memakai proxy BTCDOMUSDT (bukan BTC.D TradingView historis); filter exchange = snapshot sekarang, bukan historis; volume gate di backtest hanya V-01/V-02 proxy.

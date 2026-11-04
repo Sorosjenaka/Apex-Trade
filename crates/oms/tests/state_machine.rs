@@ -38,7 +38,7 @@ fn intent(side: Side, entry: Decimal, sl: Decimal, kind: EntryKind) -> EntryInte
     let f = filters()["ETHUSDT"].clone();
     let rc = RiskConfig::default();
     let sizing = size_order(&SizingInput { side, entry, sl, kind, filters: &f, risk: &rc }).unwrap();
-    EntryIntent { symbol: "ETHUSDT".into(), strategy: "S1".into(), sizing, kind, ttl_ms: 3_600_000, cancel_beyond: None }
+    EntryIntent { symbol: "ETHUSDT".into(), strategy: "S1".into(), sizing, kind, ttl_ms: 3_600_000, cancel_beyond: None, knn_features: None, knn_signal_ms: None }
 }
 
 async fn pump(m: &mut OrderManager<MockExchange>, now: i64) {
@@ -335,4 +335,22 @@ async fn cancel_beyond_cancels_unfilled_remainder_of_partial_entry() {
     assert!(m.book.trades[&cid].entry_final);
     assert!(m.book.trades[&cid].sl_algo.is_some());
     assert!(m.ex.calls().iter().any(|c| c == &format!("cancel {cid}")));
+}
+
+#[tokio::test]
+async fn knn_features_survive_close_and_state_reload() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    let mut m = mgr("knn-persist", ex, OrphanPolicy::PlaceSl);
+    let mut it = intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market);
+    it.strategy = "S5_RMP".into();
+    it.knn_features = Some([10., 20., 30., 40., 50.]);
+    it.knn_signal_ms = Some(T0 - 900_000);
+    let cid = m.submit(it, T0).await.unwrap();
+    m.close_trade(&cid, ExitKind::Manual, T0 + 1_000).await.unwrap();
+    let saved: apex_oms::manager::Book = StateStore::file(&m.cfg.state_dir.join("oms_state.json")).load().unwrap();
+    let trade = saved.closed.last().unwrap();
+    assert_eq!(trade.knn_features, Some([10., 20., 30., 40., 50.]));
+    assert_eq!(trade.knn_signal_ms, Some(T0 - 900_000));
+    assert!(trade.closed_ms.is_some());
 }
