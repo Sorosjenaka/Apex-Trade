@@ -62,6 +62,8 @@ pub struct Snapshot {
     pub btc_m15: Vec<Bar>,
     pub btc_h1: Vec<Bar>,
     pub dom_h1: Option<Vec<Bar>>,
+    pub btc_daily: Option<Vec<Bar>>,
+    pub eth_daily: Option<Vec<Bar>>,
     pub syms: Vec<(String, Vec<Bar>, Vec<Bar>)>,
 }
 
@@ -69,6 +71,9 @@ pub async fn snapshot(pc: &PublicClient, universe: &[String], now: Ms) -> anyhow
     let btc_m15 = pc.recent_closed("BTCUSDT", Tf::M15, 1000, now).await?;
     let btc_h1 = pc.recent_closed("BTCUSDT", Tf::H1, 1000, now).await?;
     let dom_h1 = pc.recent_closed("BTCDOMUSDT", Tf::H1, 1000, now).await.ok().filter(|v| !v.is_empty());
+    // Optional shadow-only daily context; failures never change trading gates.
+    let btc_daily = pc.recent_closed("BTCUSDT", Tf::D1, 250, now).await.ok().filter(|v| !v.is_empty());
+    let eth_daily = pc.recent_closed("ETHUSDT", Tf::D1, 250, now).await.ok().filter(|v| !v.is_empty());
     let mut syms = Vec::new();
     for s in universe {
         if s == "BTCUSDT" || s == "BTCDOMUSDT" {
@@ -79,13 +84,26 @@ pub async fn snapshot(pc: &PublicClient, universe: &[String], now: Ms) -> anyhow
             _ => eprintln!("  [lewati] {s}: klines gagal"),
         }
     }
-    Ok(Snapshot { btc_m15, btc_h1, dom_h1, syms })
+    Ok(Snapshot { btc_m15, btc_h1, dom_h1, btc_daily, eth_daily, syms })
 }
 
 /// MR-09 is informational only and does not alter the regime decision.
 fn reversal_shadow(s: &Snapshot) -> Option<(Ms, f64, f64)> {
     let eth = s.syms.iter().find(|(symbol, _, _)| symbol == "ETHUSDT")?;
     apex_market_reader::reversal::shadow_scores(&s.btc_h1, &eth.2)?.last().copied()
+}
+
+/// Independent uncalibrated stage/Fibonacci evidence, never used to gate trades.
+fn reversal_details(s: &Snapshot) -> Option<serde_json::Value> {
+    use apex_market_reader::reversal_context::{closed_context, hourly_context};
+    let eth = s.syms.iter().find(|(symbol, _, _)| symbol == "ETHUSDT")?;
+    let as_of = s.btc_h1.last()?.open_time + Tf::H1.ms();
+    let build = |h: &[Bar], daily: &Option<Vec<Bar>>| serde_json::json!({
+        "1h": hourly_context(h, 1, as_of), "2h": hourly_context(h, 2, as_of),
+        "4h": hourly_context(h, 4, as_of),
+        "1d": daily.as_ref().and_then(|v| closed_context(v, 24, as_of))
+    });
+    Some(serde_json::json!({"as_of": as_of, "btc": build(&s.btc_h1, &s.btc_daily), "eth": build(&eth.2, &s.eth_daily)}))
 }
 
 /// Keputusan regime pada close 15m terakhir; mesin dihangatkan 96 close sebelumnya (histeresis).
@@ -109,6 +127,7 @@ pub async fn reader(cfg: &AllConfig) -> anyhow::Result<()> {
         Some((ts, up, down)) => println!("  MR-09 shadow @ {}: up={:.2} down={:.2}", fmt_utc(ts), up, down),
         None => println!("  MR-09 shadow: data tidak cukup atau tidak sinkron"),
     }
+    if let Some(details) = reversal_details(&s) { println!("  MR-09 stage/Fib shadow: {details}"); }
     match apex_data::tv::scan(&["CRYPTOCAP:BTC.D", "CRYPTOCAP:TOTAL", "CRYPTOCAP:TOTAL3"]).await {
         Ok(m) => {
             for (k, (c, ch)) in m {
@@ -404,8 +423,8 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
     let snap = snapshot(pc, &universe, now).await?;
     let Some(dec) = decide(&snap) else { anyhow::bail!("regime: data kurang") };
     match reversal_shadow(&snap) {
-        Some((ts, up, down)) => mgr.audit.log(now, "MR09_SHADOW", serde_json::json!({"as_of": ts, "rev_up": up, "rev_down": down})),
-        None => mgr.audit.log(now, "MR09_SHADOW_UNAVAILABLE", serde_json::json!({"reason": "insufficient_or_unaligned_data"})),
+        Some((ts, up, down)) => mgr.audit.log(now, "MR09_SHADOW", serde_json::json!({"as_of": ts, "rev_up": up, "rev_down": down, "context": reversal_details(&snap)})),
+        None => mgr.audit.log(now, "MR09_SHADOW_UNAVAILABLE", serde_json::json!({"reason": "insufficient_or_unaligned_data", "context": reversal_details(&snap)})),
     }
     let fresh = live_meta(pc, cfg, &universe).await?;
     meta.metrics = fresh.metrics;

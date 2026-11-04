@@ -104,7 +104,7 @@ fn rsi_source(close: &[f64]) -> Vec<f64> {
     out
 }
 
-fn aggregate_hours(bars: &[Bar], hours: usize) -> Vec<Bar> {
+pub(crate) fn aggregate_hours(bars: &[Bar], hours: usize) -> Vec<Bar> {
     const H: i64 = 3_600_000;
     let width = H * hours as i64;
     let mut out = Vec::new();
