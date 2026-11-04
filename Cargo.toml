@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/indicators",
+    "crates/data",
+    "crates/market_reader",
+    "crates/screener",
+    "crates/strategies",
+    "crates/backtest",
+    "crates/oms",
+    "apps/apex",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+apex-core = { path = "crates/core" }
+apex-indicators = { path = "crates/indicators" }
+apex-data = { path = "crates/data" }
+apex-market-reader = { path = "crates/market_reader" }
+apex-screener = { path = "crates/screener" }
+apex-strategies = { path = "crates/strategies" }
+apex-backtest = { path = "crates/backtest" }
+apex-oms = { path = "crates/oms" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+anyhow = "1"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs", "io-util", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+csv = "1.3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[profile.release]
+opt-level = 3
+debug = false

@@ -1,0 +1,29 @@
+# Apex Scalper RS — engine config
+# KEAMANAN: arm=false dan mode="paper" adalah default. Jangan ubah arm kecuali Anda sendiri
+# sudah siap. Live butuh: arm=true + mode=live + env APEX_LIVE_CONFIRM=I_UNDERSTAND_LIVE_ORDERS.
+mode = "paper"          # paper | testnet | live  (CLI `apex run --mode` menimpa ini)
+arm = false             # GR-9: hanya user yang mengubah. Tidak ada flag CLI untuk ini.
+
+# Kosong = default 11 alt (ETH SOL XRP DOGE SUI LINK ENA NEAR 1000PEPE HYPE WLD). BTC = konteks saja.
+universe = []
+
+data_dir = "data"
+state_dir = "state"
+kill_file = "state/KILL"
+
+live_rest_base = "https://fapi.binance.com"
+live_ws_base = "wss://fstream.binance.com"
+testnet_rest_base = "https://demo-fapi.binance.com"
+testnet_ws_base = "wss://fstream.binancefuture.com"
+public_rest_base = "https://fapi.binance.com"   # data publik saja (tanpa key)
+
+recv_window_ms = 5000
+max_clock_offset_ms = 500
+entry_order_type = "limit_gtx"   # limit_gtx | market
+pending_ttl_ms = 3600000
+protection_timeout_ms = 5000
+protection_retries = 3
+orphan_policy = "place_sl"       # place_sl | flatten
+flatten_on_kill = false
+protective_close_position = true # SL/TP algo closePosition=true; false = quantity+reduceOnly
+poll_interval_secs = 5

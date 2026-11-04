@@ -1,0 +1,3 @@
+[resolver]
+# Pilih versi dependency yang kompatibel dengan rust-version workspace (1.85).
+incompatible-rust-versions = "fallback"

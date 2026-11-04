@@ -1,0 +1,18 @@
+# Golden Rules (Rules §1). Engine MENOLAK start bila nilai di sini berbeda dari default.
+start_balance_usd = 60.0
+risk_usd = 1.0
+min_risk_usd = 0.80
+sl_min_pct = 0.02
+sl_max_pct = 0.04
+leverage = 25
+margin_type = "CROSSED"
+max_positions = 2
+daily_sl_limit = 6
+daily_loss_limit_usd = 6.0
+cooldown_ms = 3600000
+equity_floor_usd = 40.0
+rr = 2.0
+max_spread_bps = 3.0
+fee_maker = 0.0002
+fee_taker = 0.0005
+slip_sl = 0.0002

@@ -1,0 +1,31 @@
+[regime]
+adx_trend = 25.0
+adx_strong = 30.0
+adx_range = 20.0
+er_trend = 0.35
+er_range = 0.25
+chop_trend = 45.0
+chop_range = 55.0
+srv_trend = 0.35
+srv_range = 0.20
+atr_ratio_trend = 1.0
+atr_ratio_range = 0.7
+atr_pct_min = 0.6
+atr_pct_max = 3.0
+min_votes = 3
+min_range_flags = 2
+enter_bars = 2
+atr_median_bars = 720
+
+[volume_gate]
+min_quote_volume_24h = 20000000.0
+min_trades_24h = 100000
+max_spread_bps = 5.0
+min_depth_usd_0p1pct = 20000.0
+max_tick_bps = 5.0
+max_min_order_usd = 25.0
+max_step_usd = 5.0
+min_age_days = 14.0
+max_abs_funding_pct = 0.1
+fail_out = 3
+pass_in = 2

@@ -1,0 +1,10 @@
+/target
+.env
+.env.*
+!.env.example
+/data/
+/reports/
+/state/
+/logs/
+*.log
+KILL

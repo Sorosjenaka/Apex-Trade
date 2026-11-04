@@ -1,0 +1,36 @@
+# Urutan = prioritas bila dua sinyal bersamaan.
+enabled = ["S1", "S2", "S3", "S4", "S5"]
+
+# Status validasi (Rules §4.3). HANYA "GO" yang boleh mengirim order testnet/live.
+# Semua masih HIPOTESIS / NO-GO — belum ada yang lolos gate G-01..G-11.
+[status]
+S1 = "NO-GO"
+S2 = "NO-GO"
+S3 = "NO-GO"
+S4 = "NO-GO"
+S5 = "NO-GO"
+
+[params]
+sl_buffer_atr = 0.15
+s1_gap_atr = 0.30
+s1_body_frac = 0.60
+s1_srv_min = 0.20
+s1_ttl = 16
+s2_pool_age = 10
+s2_reclaim_bars = 3
+s2_ttl = 4
+s3_retest_bars = 8
+s3_sbpo_min = 0.5
+s3_market = false
+s3_ttl = 4
+s4_min_range = 10
+s4_max_range = 60
+s4_min_height = 0.04
+s4_lps_bars = 24
+s4_ttl = 8
+s5_distrank_min = 70.0
+s5_apexwave_min = 60.0
+s5_impulse_atr = 2.5
+s5_ttl = 4
+sl_min_pct = 0.02
+sl_max_pct = 0.04

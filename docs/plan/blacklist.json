@@ -1,0 +1,3775 @@
+{
+ "schema": "apex-scalper.blacklist.v1",
+ "source": "https://fapi.binance.com/fapi/v1/exchangeInfo (snapshot fapi_exchangeInfo_20261104T190437Z.json, fetch 20261104T190437Z UTC, serverTime 1793754061893)",
+ "rules": [
+  {
+   "id": "BL-R0",
+   "type": "scope",
+   "rule": "izinkan HANYA jika contractType=='PERPETUAL' AND quoteAsset=='USDT' AND status=='TRADING' AND underlyingType=='COIN'; selain itu default DENY (termasuk listing baru dengan tipe yang belum dikenal)"
+  },
+  {
+   "id": "BL-R1",
+   "rule": "contractType=='TRADIFI_PERPETUAL' -> blacklist (saham, ETF, komoditas, forex, pre-IPO)"
+  },
+  {
+   "id": "BL-R2",
+   "rule": "'TradFi' in underlyingSubType -> blacklist (jaring pengaman bila Binance memakai contractType PERPETUAL)"
+  },
+  {
+   "id": "BL-R3",
+   "rule": "underlyingType=='INDEX' -> blacklist (BTCDOM, ALL, indeks komposit)"
+  },
+  {
+   "id": "BL-R4",
+   "rule": "underlyingType=='PREMARKET' OR 'Pre-Market' in underlyingSubType -> blacklist"
+  },
+  {
+   "id": "BL-R5",
+   "rule": "underlyingType not in {'COIN'} -> blacklist (default deny tipe baru: EQUITY, HK_EQUITY, KR_EQUITY, CN_EQUITY, COMMODITY, FX, dll)"
+  },
+  {
+   "id": "BL-R6",
+   "rule": "baseAsset in COMMODITY_TOKENS -> blacklist (token yang melacak harga komoditas walau underlyingType=COIN)",
+   "list": {
+    "PAXG": "emas tokenized (Paxos Gold)",
+    "XAUT": "emas tokenized (Tether Gold)"
+   }
+  },
+  {
+   "id": "BL-R7",
+   "rule": "baseAsset in STABLECOINS -> blacklist (pegged, tidak ada volatilitas scalping)",
+   "list": [
+    "BUSD",
+    "DAI",
+    "EUR",
+    "EURI",
+    "FDUSD",
+    "PYUSD",
+    "RLUSD",
+    "TUSD",
+    "USD1",
+    "USDC",
+    "USDE",
+    "USDP"
+   ]
+  },
+  {
+   "id": "BL-R8",
+   "rule": "re-evaluasi saat start + tiap 1 jam dari /fapi/v1/exchangeInfo; symbol yang hilang/status!=TRADING otomatis keluar dari universe; hasil berubah -> log + alert"
+  }
+ ],
+ "summary": {
+  "trading_usdt_perp_total": 756,
+  "crypto_allowed_usdt": 516,
+  "blacklisted_usdt": 240,
+  "blacklisted_all_quotes": 241,
+  "by_category_usdt": {
+   "INDEKS": 2,
+   "STABLECOIN": 1,
+   "KOMODITAS_TOKENIZED": 2,
+   "KOMODITAS": 8,
+   "SAHAM": 185,
+   "ETF/ETP": 36,
+   "PRE-IPO": 4,
+   "FOREX": 1,
+   "PRE-MARKET": 1
+  },
+  "by_rule_usdt": {
+   "BL-R3": 2,
+   "BL-R7": 1,
+   "BL-R6": 2,
+   "BL-R1": 234,
+   "BL-R4": 1
+  },
+  "by_category_all": {
+   "INDEKS": 2,
+   "STABLECOIN": 1,
+   "KOMODITAS_TOKENIZED": 2,
+   "KOMODITAS": 8,
+   "SAHAM": 186,
+   "ETF/ETP": 36,
+   "PRE-IPO": 4,
+   "FOREX": 1,
+   "PRE-MARKET": 1
+  }
+ },
+ "rwa_review_allowed": [
+  {
+   "symbol": "MANTRAUSDT",
+   "underlyingSubType": [
+    "RWA",
+    "Crypto"
+   ],
+   "note": "RWA-tag tapi token protokol crypto-native; diizinkan, review manual"
+  },
+  {
+   "symbol": "CFGUSDT",
+   "underlyingSubType": [
+    "RWA",
+    "Crypto"
+   ],
+   "note": "RWA-tag tapi token protokol crypto-native; diizinkan, review manual"
+  }
+ ],
+ "crypto_allowlist_usdt": [
+  "0GUSDT",
+  "1000000MOGUSDT",
+  "1000BONKUSDT",
+  "1000CATUSDT",
+  "1000CHEEMSUSDT",
+  "1000FLOKIUSDT",
+  "1000LUNCUSDT",
+  "1000PEPEUSDT",
+  "1000RATSUSDT",
+  "1000SATSUSDT",
+  "1000SHIBUSDT",
+  "1000XECUSDT",
+  "1INCHUSDT",
+  "1MBABYDOGEUSDT",
+  "2ZUSDT",
+  "4USDT",
+  "AAVEUSDT",
+  "ACEUSDT",
+  "ACHUSDT",
+  "ACTUSDT",
+  "ACUUSDT",
+  "ADAUSDT",
+  "AEROUSDT",
+  "AEVOUSDT",
+  "AGLDUSDT",
+  "AGTUSDT",
+  "AIAUSDT",
+  "AIGENSYNUSDT",
+  "AINUSDT",
+  "AIOTUSDT",
+  "AIOUSDT",
+  "AIXBTUSDT",
+  "AKEUSDT",
+  "AKTUSDT",
+  "ALCHUSDT",
+  "ALGOUSDT",
+  "ALICEUSDT",
+  "ALLOUSDT",
+  "ALPINEUSDT",
+  "ALTUSDT",
+  "ANIMEUSDT",
+  "ANKRUSDT",
+  "APEUSDT",
+  "API3USDT",
+  "APRUSDT",
+  "APTUSDT",
+  "ARBUSDT",
+  "ARCUSDT",
+  "ARIAUSDT",
+  "ARKMUSDT",
+  "ARKUSDT",
+  "ARPAUSDT",
+  "ARUSDT",
+  "ARXUSDT",
+  "ASRUSDT",
+  "ASTERUSDT",
+  "ASTRUSDT",
+  "ATHUSDT",
+  "ATOMUSDT",
+  "ATUSDT",
+  "AUCTIONUSDT",
+  "AUSDT",
+  "AVAAIUSDT",
+  "AVAUSDT",
+  "AVAXUSDT",
+  "AVNTUSDT",
+  "AWEUSDT",
+  "AXLUSDT",
+  "AXSUSDT",
+  "AZTECUSDT",
+  "B2USDT",
+  "BABYUSDT",
+  "BANANAS31USDT",
+  "BANANAUSDT",
+  "BANDUSDT",
+  "BANKUSDT",
+  "BANUSDT",
+  "BARDUSDT",
+  "BASEDUSDT",
+  "BASUSDT",
+  "BATUSDT",
+  "BBUSDT",
+  "BCHUSDT",
+  "BEAMXUSDT",
+  "BEATUSDT",
+  "BELUSDT",
+  "BERAUSDT",
+  "BICOUSDT",
+  "BIGTIMEUSDT",
+  "BILLUSDT",
+  "BIOUSDT",
+  "BIRBUSDT",
+  "BLESSUSDT",
+  "BLUAIUSDT",
+  "BLURUSDT",
+  "BMTUSDT",
+  "BNBUSDT",
+  "BNTUSDT",
+  "BOMEUSDT",
+  "BRETTUSDT",
+  "BREVUSDT",
+  "BROCCOLI714USDT",
+  "BROCCOLIF3BUSDT",
+  "BRUSDT",
+  "BSBUSDT",
+  "BSVUSDT",
+  "BTCUSDT",
+  "BTRUSDT",
+  "BTWUSDT",
+  "BULLAUSDT",
+  "BUSDT",
+  "C98USDT",
+  "CAKEUSDT",
+  "CAPUSDT",
+  "CARVUSDT",
+  "CATIUSDT",
+  "CCUSDT",
+  "CELOUSDT",
+  "CELRUSDT",
+  "CETUSUSDT",
+  "CFGUSDT",
+  "CFXUSDT",
+  "CGPTUSDT",
+  "CHILLGUYUSDT",
+  "CHIPUSDT",
+  "CHRUSDT",
+  "CHZUSDT",
+  "CKBUSDT",
+  "CLANKERUSDT",
+  "CLOUSDT",
+  "COAIUSDT",
+  "COLLECTUSDT",
+  "COMPUSDT",
+  "COOKIEUSDT",
+  "COTIUSDT",
+  "COWUSDT",
+  "CROSSUSDT",
+  "CRVUSDT",
+  "CTKUSDT",
+  "CTRUSDT",
+  "CTSIUSDT",
+  "CTUSDT",
+  "CUSDT",
+  "CVCUSDT",
+  "CVXUSDT",
+  "CYBERUSDT",
+  "CYSUSDT",
+  "DASHUSDT",
+  "DATAIPUSDT",
+  "DEEPUSDT",
+  "DEXEUSDT",
+  "DIAUSDT",
+  "DODOXUSDT",
+  "DOGEUSDT",
+  "DOGSUSDT",
+  "DOLOUSDT",
+  "DOODUSDT",
+  "DOSUSDT",
+  "DOTUSDT",
+  "DRIFTUSDT",
+  "DUSKUSDT",
+  "DYDXUSDT",
+  "DYMUSDT",
+  "EDENUSDT",
+  "EDGEUSDT",
+  "EDUUSDT",
+  "EGLDUSDT",
+  "EIGENUSDT",
+  "ELSAUSDT",
+  "ENAUSDT",
+  "ENJUSDT",
+  "ENSOUSDT",
+  "ENSUSDT",
+  "ERAUSDT",
+  "ESPORTSUSDT",
+  "ESPUSDT",
+  "ETCUSDT",
+  "ETHFIUSDT",
+  "ETHUSDT",
+  "ETHWUSDT",
+  "EULUSDT",
+  "EVAAUSDT",
+  "FARTCOINUSDT",
+  "FETUSDT",
+  "FFUSDT",
+  "FHEUSDT",
+  "FIDAUSDT",
+  "FIGHTUSDT",
+  "FILUSDT",
+  "FLOCKUSDT",
+  "FLOWUSDT",
+  "FLUIDUSDT",
+  "FLUXUSDT",
+  "FOGOUSDT",
+  "FOLKSUSDT",
+  "FORMUSDT",
+  "FRAXUSDT",
+  "FUSDT",
+  "GALAUSDT",
+  "GASUSDT",
+  "GENIUSUSDT",
+  "GIGGLEUSDT",
+  "GLMUSDT",
+  "GMTUSDT",
+  "GMXUSDT",
+  "GOATUSDT",
+  "GPSUSDT",
+  "GRAMUSDT",
+  "GRASSUSDT",
+  "GRIFFAINUSDT",
+  "GRTUSDT",
+  "GRVTUSDT",
+  "GTCUSDT",
+  "GUAUSDT",
+  "GUNUSDT",
+  "GUSDT",
+  "GWEIUSDT",
+  "HAEDALUSDT",
+  "HANAUSDT",
+  "HBARUSDT",
+  "HEIUSDT",
+  "HEMIUSDT",
+  "HIVEUSDT",
+  "HMSTRUSDT",
+  "HOLOUSDT",
+  "HOMEUSDT",
+  "HOTUSDT",
+  "HUMAUSDT",
+  "HUSDT",
+  "HYPERUSDT",
+  "HYPEUSDT",
+  "ICNTUSDT",
+  "ICPUSDT",
+  "IDOLUSDT",
+  "IDUSDT",
+  "ILVUSDT",
+  "IMXUSDT",
+  "INITUSDT",
+  "INJUSDT",
+  "INUSDT",
+  "INXUSDT",
+  "IOSTUSDT",
+  "IOTAUSDT",
+  "IOTXUSDT",
+  "IOUSDT",
+  "IRYSUSDT",
+  "JASMYUSDT",
+  "JCTUSDT",
+  "JELLYJELLYUSDT",
+  "JOEUSDT",
+  "JSTUSDT",
+  "JTOUSDT",
+  "JUPUSDT",
+  "KAIAUSDT",
+  "KAITOUSDT",
+  "KASUSDT",
+  "KATUSDT",
+  "KAVAUSDT",
+  "KERNELUSDT",
+  "KGENUSDT",
+  "KITEUSDT",
+  "KMNOUSDT",
+  "KNCUSDT",
+  "KOMAUSDT",
+  "KSMUSDT",
+  "LABUSDT",
+  "LAUSDT",
+  "LAYERUSDT",
+  "LDOUSDT",
+  "LIGHTUSDT",
+  "LINEAUSDT",
+  "LINKUSDT",
+  "LISTAUSDT",
+  "LITUSDT",
+  "LPTUSDT",
+  "LQTYUSDT",
+  "LSKUSDT",
+  "LTCUSDT",
+  "LUMIAUSDT",
+  "LUNA2USDT",
+  "LYNUSDT",
+  "MAGICUSDT",
+  "MAGMAUSDT",
+  "MANAUSDT",
+  "MANTAUSDT",
+  "MANTRAUSDT",
+  "MARSCOINUSDT",
+  "MASKUSDT",
+  "MAVIAUSDT",
+  "MAVUSDT",
+  "MEGAUSDT",
+  "MELANIAUSDT",
+  "MEMEUSDT",
+  "MERLUSDT",
+  "METISUSDT",
+  "METUSDT",
+  "MEUSDT",
+  "MEWUSDT",
+  "MINAUSDT",
+  "MIRAUSDT",
+  "MMTUSDT",
+  "MOCAUSDT",
+  "MONUSDT",
+  "MOODENGUSDT",
+  "MORPHOUSDT",
+  "MOVEUSDT",
+  "MOVRUSDT",
+  "MTLUSDT",
+  "MUBARAKUSDT",
+  "MUSDT",
+  "MYXUSDT",
+  "NAORISUSDT",
+  "NEARUSDT",
+  "NEIROUSDT",
+  "NEOUSDT",
+  "NEWTUSDT",
+  "NIGHTUSDT",
+  "NILUSDT",
+  "NMRUSDT",
+  "NOMUSDT",
+  "NOTUSDT",
+  "NXPCUSDT",
+  "OGNUSDT",
+  "OGUSDT",
+  "ONDOUSDT",
+  "ONEUSDT",
+  "ONGUSDT",
+  "ONTUSDT",
+  "ONUSDT",
+  "OPENUSDT",
+  "OPGUSDT",
+  "OPNUSDT",
+  "OPUSDT",
+  "ORCAUSDT",
+  "ORDERUSDT",
+  "ORDIUSDT",
+  "OUSDT",
+  "PARTIUSDT",
+  "PENDLEUSDT",
+  "PENGUUSDT",
+  "PEOPLEUSDT",
+  "PHAROSUSDT",
+  "PHAUSDT",
+  "PIEVERSEUSDT",
+  "PIPPINUSDT",
+  "PIXELUSDT",
+  "PLAYUSDT",
+  "PLUMEUSDT",
+  "PNUTUSDT",
+  "POLUSDT",
+  "POLYXUSDT",
+  "PONSUSDT",
+  "POPCATUSDT",
+  "PORTALUSDT",
+  "POWERUSDT",
+  "POWRUSDT",
+  "PRLUSDT",
+  "PROMUSDT",
+  "PROVEUSDT",
+  "PUMPUSDT",
+  "PUNDIXUSDT",
+  "PYTHUSDT",
+  "QNTUSDT",
+  "QTUMUSDT",
+  "QUSDT",
+  "RAREUSDT",
+  "RAVEUSDT",
+  "RAYSOLUSDT",
+  "RECALLUSDT",
+  "REDUSDT",
+  "RENDERUSDT",
+  "RESOLVUSDT",
+  "REUSDT",
+  "REZUSDT",
+  "RIFUSDT",
+  "RIVERUSDT",
+  "RLCUSDT",
+  "ROBOUSDT",
+  "RONINUSDT",
+  "ROSEUSDT",
+  "RPLUSDT",
+  "RSRUSDT",
+  "RUNEUSDT",
+  "RVNUSDT",
+  "SAFEUSDT",
+  "SAGAUSDT",
+  "SAHARAUSDT",
+  "SANDUSDT",
+  "SANTOSUSDT",
+  "SAPIENUSDT",
+  "SCRUSDT",
+  "SEIUSDT",
+  "SENTUSDT",
+  "SFPUSDT",
+  "SHELLUSDT",
+  "SIGNUSDT",
+  "SIRENUSDT",
+  "SKLUSDT",
+  "SKRUSDT",
+  "SKYAIUSDT",
+  "SKYUSDT",
+  "SLPUSDT",
+  "SLXUSDT",
+  "SNXUSDT",
+  "SOLUSDT",
+  "SOLVUSDT",
+  "SOMIUSDT",
+  "SONICUSDT",
+  "SOONUSDT",
+  "SOPHUSDT",
+  "SPACEUSDT",
+  "SPELLUSDT",
+  "SPKUSDT",
+  "SPORTFUNUSDT",
+  "SPXUSDT",
+  "SQDUSDT",
+  "SSVUSDT",
+  "STABLEUSDT",
+  "STARUSDT",
+  "STBLUSDT",
+  "STEEMUSDT",
+  "STOUSDT",
+  "STRKUSDT",
+  "STXUSDT",
+  "SUIUSDT",
+  "SUNUSDT",
+  "SUPERUSDT",
+  "SUSDT",
+  "SUSHIUSDT",
+  "SWARMSUSDT",
+  "SXTUSDT",
+  "SYNUSDT",
+  "SYRUPUSDT",
+  "TACUSDT",
+  "TAGUSDT",
+  "TAIKOUSDT",
+  "TAKEUSDT",
+  "TAOUSDT",
+  "TAUSDT",
+  "THETAUSDT",
+  "THEUSDT",
+  "TIAUSDT",
+  "TLMUSDT",
+  "TNSRUSDT",
+  "TOSHIUSDT",
+  "TOWNSUSDT",
+  "TRADOORUSDT",
+  "TRBUSDT",
+  "TREEUSDT",
+  "TRIAUSDT",
+  "TRUMPUSDT",
+  "TRUSTUSDT",
+  "TRUTHUSDT",
+  "TRXUSDT",
+  "TSTUSDT",
+  "TURBOUSDT",
+  "TURTLEUSDT",
+  "TUSDT",
+  "TUTUSDT",
+  "TWTUSDT",
+  "UAIUSDT",
+  "UBUSDT",
+  "UMAUSDT",
+  "UNIUSDT",
+  "USELESSUSDT",
+  "USTCUSDT",
+  "USUALUSDT",
+  "USUSDT",
+  "VANAUSDT",
+  "VELVETUSDT",
+  "VETUSDT",
+  "VIRTUALUSDT",
+  "VTHOUSDT",
+  "VVVUSDT",
+  "WALUSDT",
+  "WAXPUSDT",
+  "WCTUSDT",
+  "WETUSDT",
+  "WIFUSDT",
+  "WLDUSDT",
+  "WLFIUSDT",
+  "WOOUSDT",
+  "WUSDT",
+  "XAIUSDT",
+  "XANUSDT",
+  "XLMUSDT",
+  "XMRUSDT",
+  "XNYUSDT",
+  "XPINUSDT",
+  "XPLUSDT",
+  "XRPUSDT",
+  "XTZUSDT",
+  "XVGUSDT",
+  "XVSUSDT",
+  "YBUSDT",
+  "YFIUSDT",
+  "YGGUSDT",
+  "ZAMAUSDT",
+  "ZBTUSDT",
+  "ZECUSDT",
+  "ZENUSDT",
+  "ZEREBROUSDT",
+  "ZESTUSDT",
+  "ZETAUSDT",
+  "ZILUSDT",
+  "ZKCUSDT",
+  "ZKPUSDT",
+  "ZKUSDT",
+  "ZORAUSDT",
+  "ZROUSDT",
+  "ZRXUSDT",
+  "哈基米USDT",
+  "币安人生USDT",
+  "我踏马来了USDT",
+  "牛来USDT",
+  "龙虾USDT"
+ ],
+ "blacklist": [
+  {
+   "symbol": "AGPUUSDT",
+   "baseAsset": "AGPU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789723800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BITOUSDT",
+   "baseAsset": "BITO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785159600000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRMLUSDT",
+   "baseAsset": "CRML",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790672400000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CSOPSAMSUNG2LUSDT",
+   "baseAsset": "CSOPSAMSUNG2L",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786414500000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CSOPSKHYNIX2LUSDT",
+   "baseAsset": "CSOPSKHYNIX2L",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786414200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DRAMUSDT",
+   "baseAsset": "DRAM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779112800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EIDOUSDT",
+   "baseAsset": "EIDO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793005200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EWJUSDT",
+   "baseAsset": "EWJ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1773927000000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EWTUSDT",
+   "baseAsset": "EWT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780321800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EWYUSDT",
+   "baseAsset": "EWY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1773667800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EWZSUSDT",
+   "baseAsset": "EWZS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793268300000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EWZUSDT",
+   "baseAsset": "EWZ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781083500000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GDXUSDT",
+   "baseAsset": "GDX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786973400000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "IWMUSDT",
+   "baseAsset": "IWM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780911000000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KODEX200USDT",
+   "baseAsset": "KODEX200",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786674300000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KORUUSDT",
+   "baseAsset": "KORU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782136500000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MSTUUSDT",
+   "baseAsset": "MSTU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791795900000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MUUUSDT",
+   "baseAsset": "MUU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784192400000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NVDLUSDT",
+   "baseAsset": "NVDL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788343200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "QQQUSDT",
+   "baseAsset": "QQQ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775482200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SKDDUSDT",
+   "baseAsset": "SKDD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787648700000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SKUUUSDT",
+   "baseAsset": "SKUU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787648400000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SMHUSDT",
+   "baseAsset": "SMH",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785316200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SOXLUSDT",
+   "baseAsset": "SOXL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778853600000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SOXSUSDT",
+   "baseAsset": "SOXS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784192700000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SPYUSDT",
+   "baseAsset": "SPY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775482800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SQQQUSDT",
+   "baseAsset": "SQQQ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782740700000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TBTUSDT",
+   "baseAsset": "TBT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785159300000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TMFUSDT",
+   "baseAsset": "TMF",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785159000000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TQQQUSDT",
+   "baseAsset": "TQQQ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782740400000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TSLLUSDT",
+   "baseAsset": "TSLL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788343500000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TZAUSDT",
+   "baseAsset": "TZA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784193000000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "URNMUSDT",
+   "baseAsset": "URNM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780996200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "UVXYUSDT",
+   "baseAsset": "UVXY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781169600000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XBIUSDT",
+   "baseAsset": "XBI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783606800000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XLEUSDT",
+   "baseAsset": "XLE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781083200000,
+   "category": "ETF/ETP",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "USDBRLUSDT",
+   "baseAsset": "USDBRL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "FX",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789999200000,
+   "category": "FOREX",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ALLUSDT",
+   "baseAsset": "ALL",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "INDEX",
+   "underlyingSubType": [
+    "Index",
+    "Crypto"
+   ],
+   "onboardDate": 1754472600000,
+   "category": "INDEKS",
+   "rule": "BL-R3"
+  },
+  {
+   "symbol": "BTCDOMUSDT",
+   "baseAsset": "BTCDOM",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "INDEX",
+   "underlyingSubType": [
+    "Index",
+    "Crypto"
+   ],
+   "onboardDate": 1623913200000,
+   "category": "INDEKS",
+   "rule": "BL-R3"
+  },
+  {
+   "symbol": "BZUSDT",
+   "baseAsset": "BZ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775034600000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CLUSDT",
+   "baseAsset": "CL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775034000000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "COPPERUSDT",
+   "baseAsset": "COPPER",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1772787600000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NATGASUSDT",
+   "baseAsset": "NATGAS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775035200000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XAGUSDT",
+   "baseAsset": "XAG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1767780000000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XAUUSDT",
+   "baseAsset": "XAU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1765440300000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XPDUSDT",
+   "baseAsset": "XPD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1769768100000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XPTUSDT",
+   "baseAsset": "XPT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "COMMODITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1769767200000,
+   "category": "KOMODITAS",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PAXGUSDT",
+   "baseAsset": "PAXG",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "COIN",
+   "underlyingSubType": [
+    "RWA",
+    "Crypto"
+   ],
+   "onboardDate": 1743071400000,
+   "category": "KOMODITAS_TOKENIZED",
+   "rule": "BL-R6"
+  },
+  {
+   "symbol": "XAUTUSDT",
+   "baseAsset": "XAUT",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "COIN",
+   "underlyingSubType": [
+    "RWA",
+    "Crypto"
+   ],
+   "onboardDate": 1774533600000,
+   "category": "KOMODITAS_TOKENIZED",
+   "rule": "BL-R6"
+  },
+  {
+   "symbol": "ANTHROPICUSDT",
+   "baseAsset": "ANTHROPIC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "PREMARKET",
+   "underlyingSubType": [
+    "Pre-IPO",
+    "TradFi"
+   ],
+   "onboardDate": 1780374600000,
+   "category": "PRE-IPO",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MOONSHOTUSDT",
+   "baseAsset": "MOONSHOT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "PREMARKET",
+   "underlyingSubType": [
+    "TradFi",
+    "Pre-IPO"
+   ],
+   "onboardDate": 1790065800000,
+   "category": "PRE-IPO",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "OPENAIUSDT",
+   "baseAsset": "OPENAI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "PREMARKET",
+   "underlyingSubType": [
+    "Pre-IPO",
+    "TradFi"
+   ],
+   "onboardDate": 1779784200000,
+   "category": "PRE-IPO",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "OURAUSDT",
+   "baseAsset": "OURA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "PREMARKET",
+   "underlyingSubType": [
+    "Pre-IPO",
+    "TradFi"
+   ],
+   "onboardDate": 1790152200000,
+   "category": "PRE-IPO",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PREDICTUSDT",
+   "baseAsset": "PREDICT",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "PREMARKET",
+   "underlyingSubType": [
+    "Pre-Market"
+   ],
+   "onboardDate": 1792916100000,
+   "category": "PRE-MARKET",
+   "rule": "BL-R4"
+  },
+  {
+   "symbol": "AAOIUSDT",
+   "baseAsset": "AAOI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780910700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AAPLUSDT",
+   "baseAsset": "AAPL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775483400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ABBVUSDT",
+   "baseAsset": "ABBV",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793006100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ACNUSDT",
+   "baseAsset": "ACN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790673000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ADBEUSDT",
+   "baseAsset": "ADBE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781169900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AKAMUSDT",
+   "baseAsset": "AKAM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791278100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ALABUSDT",
+   "baseAsset": "ALAB",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782135600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AMATUSDT",
+   "baseAsset": "AMAT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780909800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AMCUSDT",
+   "baseAsset": "AMC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789722300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AMDUSDT",
+   "baseAsset": "AMD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778074200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AMGNUSDT",
+   "baseAsset": "AMGN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793269200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AMZNUSDT",
+   "baseAsset": "AMZN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770648000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ANETUSDT",
+   "baseAsset": "ANET",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789722900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "APLDUSDT",
+   "baseAsset": "APLD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789723500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "APPUSDT",
+   "baseAsset": "APP",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783673100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ARMUSDT",
+   "baseAsset": "ARM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779802800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ASMLUSDT",
+   "baseAsset": "ASML",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781170800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ASTSUSDT",
+   "baseAsset": "ASTS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780322100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AVGOUSDT",
+   "baseAsset": "AVGO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1776692400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "AXTIUSDT",
+   "baseAsset": "AXTI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780911300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BABAUSDT",
+   "baseAsset": "BABA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1776693000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BACUSDT",
+   "baseAsset": "BAC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1792573500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BBXUSDT",
+   "baseAsset": "BBX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780321200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BEUSDT",
+   "baseAsset": "BE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779803100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BMNRUSDT",
+   "baseAsset": "BMNR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781169300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BNCUSDT",
+   "baseAsset": "BNC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783607100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BOTUSDT",
+   "baseAsset": "BOT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783605600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BRKBUSDT",
+   "baseAsset": "BRKB",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779112200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BSPUSDT",
+   "baseAsset": "BSP",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782985800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BWETUSDT",
+   "baseAsset": "BWET",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790672700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BXUSDT",
+   "baseAsset": "BX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780909200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "BYDUSDT",
+   "baseAsset": "BYD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788746400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CATUSDT",
+   "baseAsset": "CAT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782984000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CBRSUSDT",
+   "baseAsset": "CBRS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779183000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CEGUSDT",
+   "baseAsset": "CEG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1792573200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CIENUSDT",
+   "baseAsset": "CIEN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782136200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "COHRUSDT",
+   "baseAsset": "COHR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779803400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "COINUSDT",
+   "baseAsset": "COIN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770649200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "COSTUSDT",
+   "baseAsset": "COST",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780995900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRCLUSDT",
+   "baseAsset": "CRCL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770648600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRDOUSDT",
+   "baseAsset": "CRDO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780910400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRMUSDT",
+   "baseAsset": "CRM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780478100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRWDUSDT",
+   "baseAsset": "CRWD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780910100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CRWVUSDT",
+   "baseAsset": "CRWV",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779111000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CSCOUSDT",
+   "baseAsset": "CSCO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778853000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CVNAUSDT",
+   "baseAsset": "CVNA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790586600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CXMTUSDT",
+   "baseAsset": "CXMT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "CN_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787029200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "CYPHUSDT",
+   "baseAsset": "CYPH",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789722600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DDOGUSDT",
+   "baseAsset": "DDOG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788343800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DELLUSDT",
+   "baseAsset": "DELL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780477200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DISUSDT",
+   "baseAsset": "DIS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778852400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DJTUSDT",
+   "baseAsset": "DJT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787649300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "DKNGUSDT",
+   "baseAsset": "DKNG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781082300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EBAYUSDT",
+   "baseAsset": "EBAY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780996800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "EQTUSDT",
+   "baseAsset": "EQT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793005500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "FLEXUSDT",
+   "baseAsset": "FLEX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782984600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "FLNCUSDT",
+   "baseAsset": "FLNC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779112500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "FWDIUSDT",
+   "baseAsset": "FWDI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783607400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GEVUSDT",
+   "baseAsset": "GEV",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783672200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GIGADEVUSDT",
+   "baseAsset": "GIGADEV",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785735000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GLWUSDT",
+   "baseAsset": "GLW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781170200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GMEUSDT",
+   "baseAsset": "GME",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781082900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GOOGLUSDT",
+   "baseAsset": "GOOGL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1774536600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GPROUSDT",
+   "baseAsset": "GPRO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788443100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GSUSDT",
+   "baseAsset": "GS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785315900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "GTLBUSDT",
+   "baseAsset": "GTLB",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788345000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HANMIUSDT",
+   "baseAsset": "HANMI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786673400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HDUSDT",
+   "baseAsset": "HD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778853300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HIMSUSDT",
+   "baseAsset": "HIMS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780996500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HK0625USDT",
+   "baseAsset": "HK0625",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788230700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HK0700USDT",
+   "baseAsset": "HK0700",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784689200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HK0992USDT",
+   "baseAsset": "HK0992",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788746700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HK1810USDT",
+   "baseAsset": "HK1810",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784689500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HOODUSDT",
+   "baseAsset": "HOOD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770043500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HPEUSDT",
+   "baseAsset": "HPE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780909500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HUTUSDT",
+   "baseAsset": "HUT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789723200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "HYUNDAIUSDT",
+   "baseAsset": "HYUNDAI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780370400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "IBKRUSDT",
+   "baseAsset": "IBKR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1792573800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "IBMUSDT",
+   "baseAsset": "IBM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780477500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "INTCUSDT",
+   "baseAsset": "INTC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770042600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "INTWUSDT",
+   "baseAsset": "INTW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783606200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "IONQUSDT",
+   "baseAsset": "IONQ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787908200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "IRENUSDT",
+   "baseAsset": "IREN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780478400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "JPMUSDT",
+   "baseAsset": "JPM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779111600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KLACUSDT",
+   "baseAsset": "KLAC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782135300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KOUSDT",
+   "baseAsset": "KO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786006800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KSTRUSDT",
+   "baseAsset": "KSTR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782985500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "KUAISHOUUSDT",
+   "baseAsset": "KUAISHOU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786413600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "LGELECTRONICSUSDT",
+   "baseAsset": "LGELECTRONICS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786673700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "LITEUSDT",
+   "baseAsset": "LITE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778851800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "LLYUSDT",
+   "baseAsset": "LLY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780320600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "LRCXUSDT",
+   "baseAsset": "LRCX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782135000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "LYTEUSDT",
+   "baseAsset": "LYTE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786974600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MARAUSDT",
+   "baseAsset": "MARA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787908500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MCDUSDT",
+   "baseAsset": "MCD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791277800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MDBUSDT",
+   "baseAsset": "MDB",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788344400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MDTUSDT",
+   "baseAsset": "MDT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1792574400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MEITUANUSDT",
+   "baseAsset": "MEITUAN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786413900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MELIUSDT",
+   "baseAsset": "MELI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793269800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "METAUSDT",
+   "baseAsset": "META",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1774535400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MINIMAXUSDT",
+   "baseAsset": "MINIMAX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784257200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MPUSDT",
+   "baseAsset": "MP",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790673300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MRKUSDT",
+   "baseAsset": "MRK",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787907900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MRNAUSDT",
+   "baseAsset": "MRNA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787649600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MRVLUSDT",
+   "baseAsset": "MRVL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778853900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MSFTUSDT",
+   "baseAsset": "MSFT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1776691800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MSTRUSDT",
+   "baseAsset": "MSTR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770647400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MUUSDT",
+   "baseAsset": "MU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775568600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "MVLLUSDT",
+   "baseAsset": "MVLL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782740100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NAVERUSDT",
+   "baseAsset": "NAVER",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786674000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NBISUSDT",
+   "baseAsset": "NBIS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779802200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NETUSDT",
+   "baseAsset": "NET",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786973700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NFLXUSDT",
+   "baseAsset": "NFLX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780995600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NKEUSDT",
+   "baseAsset": "NKE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790674200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NOKUSDT",
+   "baseAsset": "NOK",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780321500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NOWUSDT",
+   "baseAsset": "NOW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780477800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NVDAUSDT",
+   "baseAsset": "NVDA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1774536000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "NVOUSDT",
+   "baseAsset": "NVO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780320900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "OKLOUSDT",
+   "baseAsset": "OKLO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790586000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ONDSUSDT",
+   "baseAsset": "ONDS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780478700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ORCLUSDT",
+   "baseAsset": "ORCL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778852100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "OXYUSDT",
+   "baseAsset": "OXY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793268900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PANWUSDT",
+   "baseAsset": "PANW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784625000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PATHUSDT",
+   "baseAsset": "PATH",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1789722000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PAYPUSDT",
+   "baseAsset": "PAYP",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1774276200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PDDUSDT",
+   "baseAsset": "PDD",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787908800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PENGUSDT",
+   "baseAsset": "PENG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784625300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PFEUSDT",
+   "baseAsset": "PFE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793269500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PLTRUSDT",
+   "baseAsset": "PLTR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1770649800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "POPMARTUSDT",
+   "baseAsset": "POPMART",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784773800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "PYPLUSDT",
+   "baseAsset": "PYPL",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1785315600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "QCOMUSDT",
+   "baseAsset": "QCOM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778074500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "QNTXUSDT",
+   "baseAsset": "QNTX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780042500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RAMUSDT",
+   "baseAsset": "RAM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787649000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RDDTUSDT",
+   "baseAsset": "RDDT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786007100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RDWUSDT",
+   "baseAsset": "RDW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791796500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RIVNUSDT",
+   "baseAsset": "RIVN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781082600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RKLBUSDT",
+   "baseAsset": "RKLB",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779113100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "RUMUSDT",
+   "baseAsset": "RUM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790586900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SAMSUNGEMUSDT",
+   "baseAsset": "SAMSUNGEM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786673100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SAMSUNGUSDT",
+   "baseAsset": "SAMSUNG",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780369800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SECZUSDT",
+   "baseAsset": "SECZ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790673600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SHAZUSDT",
+   "baseAsset": "SHAZ",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784624400000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SHOPUSDT",
+   "baseAsset": "SHOP",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786974300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SKHYNIXUSDT",
+   "baseAsset": "SKHYNIX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "KR_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1780369200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SKHYUSDT",
+   "baseAsset": "SKHY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783698600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SMCIUSDT",
+   "baseAsset": "SMCI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782135900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SMRUSDT",
+   "baseAsset": "SMR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793268600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SNDKUSDT",
+   "baseAsset": "SNDK",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775569200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SNOWUSDT",
+   "baseAsset": "SNOW",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783672800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SNPSUSDT",
+   "baseAsset": "SNPS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791796200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SNXXUSDT",
+   "baseAsset": "SNXX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783606500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SOFIUSDT",
+   "baseAsset": "SOFI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784624700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SONYUSDT",
+   "baseAsset": "SONY",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782136800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SPCXUSD1",
+   "baseAsset": "SPCX",
+   "quoteAsset": "USD1",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784538000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "SPCXUSDT",
+   "baseAsset": "SPCX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779338700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "STMUSDT",
+   "baseAsset": "STM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1793005800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "STRCUSDT",
+   "baseAsset": "STRC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782983700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "STXXUSDT",
+   "baseAsset": "STXX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781170500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TEAMUSDT",
+   "baseAsset": "TEAM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788344100000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TEMUSDT",
+   "baseAsset": "TEM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787907600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TENCENTUSDT",
+   "baseAsset": "TENCENT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784689800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TERUSDT",
+   "baseAsset": "TER",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782984900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TSLAUSDT",
+   "baseAsset": "TSLA",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1769610600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TSMUSDT",
+   "baseAsset": "TSM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1775484000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TTWOUSDT",
+   "baseAsset": "TTWO",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782985200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TWSTUSDT",
+   "baseAsset": "TWST",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790586300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "TXNUSDT",
+   "baseAsset": "TXN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1782984300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "UBERUSDT",
+   "baseAsset": "UBER",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778852700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "UNHUSDT",
+   "baseAsset": "UNH",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790673900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "UNITREEUSDT",
+   "baseAsset": "UNITREE",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "CN_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1787107500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "USARUSDT",
+   "baseAsset": "USAR",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1778074800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "USDEXUSDT",
+   "baseAsset": "USDEX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791277200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "VKTXUSDT",
+   "baseAsset": "VKTX",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791277500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "VRTUSDT",
+   "baseAsset": "VRT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783672500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "VSTUSDT",
+   "baseAsset": "VST",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786974000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "VUSDT",
+   "baseAsset": "V",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779111900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "WDCUSDT",
+   "baseAsset": "WDC",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779802500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "WENUSDT",
+   "baseAsset": "WEN",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1783605900000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "WMTUSDT",
+   "baseAsset": "WMT",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1779111300000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "XOMUSDT",
+   "baseAsset": "XOM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1790587200000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ZCSHUSDT",
+   "baseAsset": "ZCSH",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1791795600000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ZHIPUUSDT",
+   "baseAsset": "ZHIPU",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1784257500000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ZHONGJIUSDT",
+   "baseAsset": "ZHONGJI",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "HK_EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1786672800000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ZMUSDT",
+   "baseAsset": "ZM",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1781082000000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "ZSUSDT",
+   "baseAsset": "ZS",
+   "quoteAsset": "USDT",
+   "contractType": "TRADIFI_PERPETUAL",
+   "underlyingType": "EQUITY",
+   "underlyingSubType": [
+    "TradFi"
+   ],
+   "onboardDate": 1788344700000,
+   "category": "SAHAM",
+   "rule": "BL-R1"
+  },
+  {
+   "symbol": "USDCUSDT",
+   "baseAsset": "USDC",
+   "quoteAsset": "USDT",
+   "contractType": "PERPETUAL",
+   "underlyingType": "COIN",
+   "underlyingSubType": [
+    "Crypto"
+   ],
+   "onboardDate": 1678579200000,
+   "category": "STABLECOIN",
+   "rule": "BL-R7"
+  }
+ ]
+}

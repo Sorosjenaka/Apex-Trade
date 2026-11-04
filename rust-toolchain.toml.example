@@ -1,0 +1,4 @@
+# Opsional: salin ke rust-toolchain.toml bila ingin mengunci versi.
+# Kode ini kompatibel dengan Rust >= 1.85 (diuji di box dengan 1.85.1; PC user 1.99.1).
+[toolchain]
+channel = "stable"
