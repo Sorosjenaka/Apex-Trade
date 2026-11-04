@@ -82,6 +82,12 @@ pub async fn snapshot(pc: &PublicClient, universe: &[String], now: Ms) -> anyhow
     Ok(Snapshot { btc_m15, btc_h1, dom_h1, syms })
 }
 
+/// MR-09 is informational only and does not alter the regime decision.
+fn reversal_shadow(s: &Snapshot) -> Option<(Ms, f64, f64)> {
+    let eth = s.syms.iter().find(|(symbol, _, _)| symbol == "ETHUSDT")?;
+    apex_market_reader::reversal::shadow_scores(&s.btc_h1, &eth.2)?.last().copied()
+}
+
 /// Keputusan regime pada close 15m terakhir; mesin dihangatkan 96 close sebelumnya (histeresis).
 pub fn decide(s: &Snapshot) -> Option<RegimeDecision> {
     let closes: Vec<Ms> = s.btc_m15.iter().rev().take(96).rev().map(|b| b.open_time + Tf::M15.ms()).collect();
@@ -99,6 +105,10 @@ pub async fn reader(cfg: &AllConfig) -> anyhow::Result<()> {
     println!("  state     : {}  (raw {})", d.state.as_str(), d.raw.as_str());
     println!("  long_ok={} short_ok={} universe={:?} max_pos={}", d.long_ok, d.short_ok, d.universe, d.max_positions);
     println!("  alasan    : {}", d.reasons.join("; "));
+    match reversal_shadow(&s) {
+        Some((ts, up, down)) => println!("  MR-09 shadow @ {}: up={:.2} down={:.2}", fmt_utc(ts), up, down),
+        None => println!("  MR-09 shadow: data tidak cukup atau tidak sinkron"),
+    }
     match apex_data::tv::scan(&["CRYPTOCAP:BTC.D", "CRYPTOCAP:TOTAL", "CRYPTOCAP:TOTAL3"]).await {
         Ok(m) => {
             for (k, (c, ch)) in m {
@@ -391,6 +401,10 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
     let universe = cfg.universe();
     let snap = snapshot(pc, &universe, now).await?;
     let Some(dec) = decide(&snap) else { anyhow::bail!("regime: data kurang") };
+    match reversal_shadow(&snap) {
+        Some((ts, up, down)) => mgr.audit.log(now, "MR09_SHADOW", serde_json::json!({"as_of": ts, "rev_up": up, "rev_down": down})),
+        None => mgr.audit.log(now, "MR09_SHADOW_UNAVAILABLE", serde_json::json!({"reason": "insufficient_or_unaligned_data"})),
+    }
     let fresh = live_meta(pc, cfg, &universe).await?;
     meta.metrics = fresh.metrics;
     meta.qv_rank = fresh.qv_rank;
