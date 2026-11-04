@@ -242,7 +242,45 @@ pub fn s4_wsl(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     None
 }
 
-/// S5 Regime Momentum Pullback. kNN (varian K) & filter magnet BELUM diimplementasi.
+/// Proxy Magnet: pool pivot high terkonfirmasi, berbobot volume dan digabung
+/// dalam 0,3 ATR. Pool kedaluwarsa setelah 200 bar tanpa pivot baru.
+/// Ini adaptasi dari riset lokal, bukan parity penuh indikator TradingView.
+fn opposing_magnet_blocks(v: &View, entry: f64, one_r: f64) -> bool {
+    struct Pool { price: f64, weight: f64, refreshed: usize }
+    let t = v.t();
+    let mut pools: Vec<Pool> = Vec::new();
+    for pivot in v.piv15_3.iter().filter(|x| x.high && x.confirmed_idx <= t && t - x.confirmed_idx <= 200) {
+        let now = pivot.confirmed_idx;
+        pools.retain(|p| now.saturating_sub(p.refreshed) <= 200);
+        let atr = v.f15.atr[now];
+        if !fin(atr) || atr <= 0.0 { continue; }
+        let avg = v.f15.vol_sma20[pivot.idx];
+        let volume = v.m15[pivot.idx].volume;
+        let weight = if fin(avg) && avg > 0.0 && fin(volume) && volume > 0.0 { (volume / avg).min(4.0) } else { 1.0 };
+        if let Some(pool) = pools.iter_mut().find(|p| (p.price - pivot.price).abs() <= 0.3 * atr) {
+            pool.price = (pool.price * pool.weight + pivot.price * weight) / (pool.weight + weight);
+            pool.weight += weight;
+            pool.refreshed = now;
+        } else {
+            pools.push(Pool { price: pivot.price, weight, refreshed: now });
+            if pools.len() > 32 { pools.remove(0); }
+        }
+    }
+    pools.iter().any(|p| t.saturating_sub(p.refreshed) <= 200 && p.price >= entry && p.price <= one_r)
+}
+
+/// Compute the real-price 1R target before transforming a short into mirror space.
+fn one_r_in_side_space(side: apex_core::types::Side, entry: f64, sl: f64) -> Option<f64> {
+    match side {
+        apex_core::types::Side::Long => Some(entry + (entry - sl)),
+        apex_core::types::Side::Short => {
+            let target = 2.0 / entry - 1.0 / sl;
+            if target > 0.0 && target.is_finite() { Some(1.0 / target) } else { None }
+        }
+    }
+}
+
+/// S5 Regime Momentum Pullback. kNN (varian K) belum diimplementasi.
 pub fn s5_rmp(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     let t = v.t();
     let h = v.h()?;
@@ -293,11 +331,16 @@ pub fn s5_rmp(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     if !sl_ok(entry, sl, p) {
         return None;
     }
+    let one_r = one_r_in_side_space(v.side, entry, sl)?;
+    if opposing_magnet_blocks(v, entry, one_r) {
+        return None;
+    }
     Some(RawSignal { entry, sl, market: false, ttl: p.s5_ttl, cancel_beyond: None, note: format!("impulse {:.1}ATR", d / a1) })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{one_r_in_side_space, opposing_magnet_blocks};
     use crate::*;
     use apex_core::types::Bar;
     use apex_screener::SymState;
@@ -392,6 +435,35 @@ mod tests {
             assert!(evaluate(&a, t, SymState::Ranging, &StrategyId::ALL, &p).is_empty());
             assert!(evaluate(&a, t, SymState::Blocked, &StrategyId::ALL, &p).is_empty());
         }
+    }
+
+    #[test]
+    fn magnet_requires_confirmed_opposing_pool_and_expires() {
+        let mut bars: Vec<Bar> = (0..800).map(|i| Bar {
+            open_time: i * 900_000, open:100.0, high:101.0, low:99.0, close:100.0,
+            volume:100.0, quote_volume:10000.0, trades:100, taker_buy_base:50.0,
+        }).collect();
+        bars[510].high = 105.0;
+        let h = apex_indicators::aggregate(&bars, apex_core::types::Tf::M15, apex_core::types::Tf::H1);
+        let series = SymbolSeries::new("ETHUSDT", &bars, &h);
+        let state = SymState::TrendUp;
+        assert!(!opposing_magnet_blocks(&make_view(&series, &series.long, 512, state), 100.0, 106.0));
+        assert!(opposing_magnet_blocks(&make_view(&series, &series.long, 513, state), 100.0, 106.0));
+        assert!(!opposing_magnet_blocks(&make_view(&series, &series.long, 513, state), 100.0, 104.0));
+        assert!(!opposing_magnet_blocks(&make_view(&series, &series.long, 714, state), 100.0, 106.0));
+
+        // A heavier first pivot shifts a merged pool below 105.1.
+        bars[510].volume = 300.0;
+        bars[520].high = 105.2;
+        let h = apex_indicators::aggregate(&bars, apex_core::types::Tf::M15, apex_core::types::Tf::H1);
+        let weighted = SymbolSeries::new("ETHUSDT", &bars, &h);
+        assert!(opposing_magnet_blocks(&make_view(&weighted, &weighted.long, 523, state), 100.0, 105.1));
+    }
+
+    #[test]
+    fn short_magnet_target_uses_real_price_one_r() {
+        let target = one_r_in_side_space(apex_core::types::Side::Short, 1.0 / 100.0, 1.0 / 103.0).unwrap();
+        assert!((1.0 / target - 97.0).abs() < 1e-10);
     }
 
     #[test]

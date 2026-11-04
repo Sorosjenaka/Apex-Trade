@@ -48,6 +48,14 @@ pub struct ManagedTrade {
     pub tp_algo: Option<i64>,
     pub created_ms: Ms,
     pub expires_ms: Ms,
+    #[serde(default)]
+    pub cancel_beyond: Option<Decimal>,
+    #[serde(default)]
+    pub entry_final: bool,
+    #[serde(default)]
+    pub knn_features: Option<[f64; 5]>,
+    #[serde(default)]
+    pub knn_signal_ms: Option<Ms>,
     pub filled_ms: Option<Ms>,
     pub closed_ms: Option<Ms>,
     pub exit_price: Option<Decimal>,
@@ -88,6 +96,9 @@ pub struct EntryIntent {
     pub sizing: Sizing,
     pub kind: EntryKind,
     pub ttl_ms: i64,
+    pub cancel_beyond: Option<Decimal>,
+    pub knn_features: Option<[f64; 5]>,
+    pub knn_signal_ms: Option<Ms>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -243,6 +254,10 @@ impl<E: FuturesExchange> OrderManager<E> {
             tp_algo: None,
             created_ms: now,
             expires_ms: now + it.ttl_ms,
+            cancel_beyond: it.cancel_beyond,
+            entry_final: false,
+            knn_features: it.knn_features,
+            knn_signal_ms: it.knn_signal_ms,
             filled_ms: None,
             closed_ms: None,
             exit_price: None,
@@ -305,6 +320,7 @@ impl<E: FuturesExchange> OrderManager<E> {
         if !t.is_active() {
             return;
         }
+        t.entry_final |= status.is_final();
         let mut newly_filled = false;
         if cum > t.filled_qty {
             t.filled_qty = cum;
@@ -468,6 +484,22 @@ impl<E: FuturesExchange> OrderManager<E> {
         self.save();
     }
 
+    /// Evaluate an already closed bar; cancellation is reconciled against the exchange.
+    pub async fn on_closed_price(&mut self, symbol: &str, close: Decimal, close_ms: Ms) -> Result<(), OmsError> {
+        let ids: Vec<String> = self.book.trades.values().filter(|t| {
+            t.symbol == symbol && t.is_active() && t.entry_kind == EntryKind::LimitMaker && !t.entry_final && close_ms > t.created_ms
+                && t.cancel_beyond.is_some_and(|level| match t.side {
+                    Side::Long => close < level,
+                    Side::Short => close > level,
+                })
+        }).map(|t| t.client_id.clone()).collect();
+        for cid in ids {
+            self.audit.log(close_ms, "CANCEL_BEYOND", json!({"cid": cid, "symbol": symbol, "close": fmt_dec(close)}));
+            self.cancel_entry(&cid, close_ms).await?;
+        }
+        Ok(())
+    }
+
     async fn cancel_entry(&mut self, cid: &str, now: Ms) -> Result<(), OmsError> {
         let Some(t) = self.book.trades.get(cid).cloned() else { return Ok(()) };
         let r = rl!(self, self.ex.cancel_order(&t.symbol, cid));
@@ -481,7 +513,13 @@ impl<E: FuturesExchange> OrderManager<E> {
             Some(a) if !a.status.is_final() => {
                 r?;
             }
-            _ => {
+            None => {
+                return Err(OmsError::Other("status entry tidak ditemukan setelah cancel; trade tetap disimpan".into()));
+            }
+            Some(_) if t.filled_qty > Decimal::ZERO => {
+                return Err(OmsError::Other("cancel status tidak memastikan sisa entry; posisi tetap disimpan".into()));
+            }
+            Some(_) => {
                 self.book.trades.remove(cid);
                 self.audit.log(now, "ENTRY_CANCELLED", json!({"cid": cid, "symbol": t.symbol, "reason": "cancel"}));
                 self.save();
@@ -675,6 +713,10 @@ impl<E: FuturesExchange> OrderManager<E> {
                         tp_algo: None,
                         created_ms: now,
                         expires_ms: now,
+                        cancel_beyond: None,
+                        entry_final: true,
+                        knn_features: None,
+                        knn_signal_ms: None,
                         filled_ms: Some(now),
                         closed_ms: None,
                         exit_price: None,

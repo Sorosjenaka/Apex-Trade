@@ -100,6 +100,16 @@ impl MockExchange {
         self.lock().price.get(s).copied()
     }
 
+    /// Inject a partial limit fill for state-machine tests.
+    pub fn partial_fill(&self, cid: &str, qty: Decimal, ts: Ms) {
+        let mut g = self.lock();
+        g.now = ts;
+        let o = &g.orders[cid];
+        assert!(qty > Decimal::ZERO && qty < o.ack.orig_qty - o.ack.executed_qty);
+        let px = match o.kind { OrderKind::LimitGtx { price } => price, _ => panic!("limit required") };
+        Self::fill(&mut g, cid, px, qty, self.maker, "LIMIT", false);
+    }
+
     /// Update harga mark/last → isi limit yang tertembus, picu algo.
     pub fn set_price(&self, symbol: &str, px: Decimal, ts: Ms) {
         let mut g = self.lock();
@@ -121,7 +131,7 @@ impl MockExchange {
                 (match o.kind {
                     OrderKind::LimitGtx { price } => price,
                     _ => px,
-                }, o.ack.orig_qty)
+                }, o.ack.orig_qty - o.ack.executed_qty)
             };
             Self::fill(&mut g, &cid, lp, q, self.maker, "LIMIT", false);
         }
@@ -168,12 +178,13 @@ impl MockExchange {
         let signed = if o.ack.side == "BUY" { q } else { -q };
         o.ack.executed_qty += q;
         o.ack.avg_price = px;
-        o.ack.status = OrderStatus::Filled;
+        o.ack.status = if o.ack.executed_qty < o.ack.orig_qty { OrderStatus::PartiallyFilled } else { OrderStatus::Filled };
         o.ack.update_ms = ts;
         let ro = o.ack.reduce_only;
         let side = o.ack.side.clone();
         let oid = o.ack.order_id;
         let cum = o.ack.executed_qty;
+        let status = o.ack.status;
         let (amt, entry) = g.positions.get(&sym).copied().unwrap_or_default();
         let new_amt = amt + signed;
         let mut rp = Decimal::ZERO;
@@ -205,7 +216,7 @@ impl MockExchange {
             order_id: oid,
             side,
             orig_type: ot.into(),
-            status: OrderStatus::Filled,
+            status,
             exec_type: "TRADE".into(),
             last_qty: q,
             cum_qty: cum,

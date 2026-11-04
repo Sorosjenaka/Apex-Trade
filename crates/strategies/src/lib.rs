@@ -89,6 +89,8 @@ pub struct StrategyParams {
     pub s5_apexwave_min: f64,
     pub s5_impulse_atr: f64,
     pub s5_ttl: u32,
+    /// Optional K variant. No grade means no entry.
+    pub s5_knn_enabled: bool,
     pub sl_min_pct: f64,
     pub sl_max_pct: f64,
 }
@@ -117,6 +119,7 @@ impl Default for StrategyParams {
             s5_apexwave_min: 60.0,
             s5_impulse_atr: 2.5,
             s5_ttl: 4,
+            s5_knn_enabled: false,
             sl_min_pct: 0.02,
             sl_max_pct: 0.04,
         }
@@ -427,7 +430,8 @@ pub fn to_real(id: StrategyId, v: &View, r: RawSignal) -> Signal {
     }
 }
 
-/// Evaluasi semua strategi aktif (urutan prioritas = urutan `ids`) untuk kedua sisi pada bar t.
+/// Generate candidates (not executable orders) in priority order for both sides.
+/// Callers must apply risk gates and, when enabled, the stateful S5 kNN grader.
 pub fn evaluate(sym: &SymbolSeries, t: usize, state: SymState, ids: &[StrategyId], p: &StrategyParams) -> Vec<Signal> {
     let mut out = Vec::new();
     for s in [&sym.long, &sym.short] {
@@ -456,3 +460,5 @@ pub fn run_one(id: StrategyId, v: &View, p: &StrategyParams) -> Option<RawSignal
         StrategyId::S5Rmp => s5_rmp(v, p),
     }
 }
+pub mod ofcc_watch;
+pub mod knn;

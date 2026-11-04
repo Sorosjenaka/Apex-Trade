@@ -133,6 +133,7 @@ struct Pending {
     created_k: usize,
     tick: f64,
     regime: String,
+    ofcc_watch: Option<apex_strategies::ofcc_watch::S1Watch>,
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +191,39 @@ pub fn screener_states(h1: &[Bar], m15: &[Bar], cfg: &ScreenerConfig) -> Vec<Sym
     out
 }
 
+/// Never train a kNN seed across the locked holdout interval.
+fn knn_training_start(first: Option<Ms>, start: Ms) -> anyhow::Result<Option<Ms>> {
+    let Some(first) = first.filter(|&first| first < start) else { return Ok(None) };
+    if crate::overlaps_holdout(first, start) {
+        anyhow::bail!("kNN training range overlaps locked holdout");
+    }
+    Ok(Some(first))
+}
+
+/// Freeze the IS-trained grader under baseline costs when testing stress costs OOS.
+fn knn_training_config(cfg: &BacktestConfig, first: Ms) -> BacktestConfig {
+    let mut train = cfg.clone();
+    train.start = first;
+    train.end = cfg.start;
+    train.strategies = vec![StrategyId::S5Rmp];
+    train.params.s5_knn_enabled = false;
+    train.fee_mult = 1.0;
+    train.funding_mult = 1.0;
+    train.extra_slip = 0.0;
+    train
+}
+
+fn knn_sample(tr: &Trade, syms: &[SymCtx]) -> Option<apex_strategies::knn::LabeledSample> {
+    if tr.strategy != StrategyId::S5Rmp.code() || tr.exit_kind == ExitKind::EndOfData || !tr.pnl_net.is_finite() { return None; }
+    let sc = syms.iter().find(|s| s.series.symbol == tr.symbol)?;
+    let index = sc.ot15.binary_search(&(tr.signal_ms - Tf::M15.ms())).ok()?;
+    let series = if tr.side == Side::Long { &sc.series.long } else { &sc.series.short };
+    let features = apex_strategies::knn::features_at(series, index)?;
+    let tf = Tf::M15.ms();
+    let closed_ms = tr.exit_ms.div_euclid(tf) * tf + if tr.exit_ms.rem_euclid(tf) == 0 { 0 } else { tf };
+    Some(apex_strategies::knn::LabeledSample { features, signal_ms: tr.signal_ms, closed_ms, win: tr.pnl_net > 0.0 })
+}
+
 pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<BacktestReport> {
     let rc = &cfg.risk;
     rc.validate_golden_rules().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -220,6 +254,17 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
         })
         .collect();
 
+    // Variant K: seed only with completed S5 trades from a separate pre-start IS replay.
+    // This replay runs the same risk rules and is always bounded strictly before OOS.
+    let mut knn_memory = Vec::new();
+    if cfg.params.s5_knn_enabled && cfg.strategies.contains(&StrategyId::S5Rmp) {
+        if let Some(first) = knn_training_start(mkt.btc_m15.first().map(|b| b.open_time), cfg.start)? {
+            let train = knn_training_config(cfg, first);
+            let history = run_backtest(mkt, &train)?;
+            knn_memory.extend(history.trades.iter().filter_map(|t| knn_sample(t, &syms)).filter(|s| s.closed_ms < cfg.start));
+        }
+    }
+    let mut knn_seen = 0usize;
     let mut wallet = rc.start_balance_usd;
     let mut risk = RiskState::new(cfg.start.max(0));
     let mut pending: Vec<Pending> = Vec::new();
@@ -300,7 +345,9 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
 
         // --- 3. order pending: fill / expire
         let mut keep = Vec::new();
-        for p in std::mem::take(&mut pending) {
+        // The setup has reserved a slot, but submission after OFCC is a new decision.
+        let mut remaining = std::mem::take(&mut pending).into_iter();
+        while let Some(mut p) = remaining.next() {
             if kk >= p.created_k + p.sig.ttl_bars as usize {
                 bump(&mut skips, "EXPIRED");
                 continue;
@@ -312,6 +359,48 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let si = &mkt.symbols[p.sym];
             let b = &si.m15[i];
             let s = p.sig.side.sign();
+            if let Some(watch) = p.ofcc_watch.as_mut() {
+                use apex_strategies::ofcc_watch::Outcome;
+                let series = &syms[p.sym].series;
+                let feature = if p.sig.side == Side::Long { &series.long.f15 } else { &series.short.f15 };
+                match watch.observe(b, t_close, feature.p90_absdelta[i]) {
+                    Outcome::Waiting => keep.push(p),
+                    Outcome::Confirmed => {
+                        // A post-only order cannot be submitted if the close already crosses its limit.
+                        let crosses = if s > 0.0 { b.close <= p.entry } else { b.close >= p.entry };
+                        let d = &timeline.decisions[kk];
+                        let upnl: f64 = open.iter().map(|pos| {
+                            idx[pos.p.sym].map(|j| pos.p.sig.side.sign() * (mkt.symbols[pos.p.sym].m15[j].close - pos.fill) * pos.p.qty).unwrap_or(0.0)
+                        }).sum();
+                        let state = syms[p.sym].series.h1_idx_at(i).map(|h| syms[p.sym].states[h]).unwrap_or(SymState::Blocked);
+                        let allowed_universe = match d.universe {
+                            UniverseScope::All => true,
+                            UniverseScope::None => false,
+                            UniverseScope::Majors => {
+                                let mut v: Vec<(usize, f64)> = (0..syms.len()).filter_map(|j| idx[j].map(|i| (j, syms[j].qv24[i]))).filter(|x| x.1.is_finite()).collect();
+                                v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                                v.into_iter().take(10).any(|(j, _)| j == p.sym)
+                            }
+                        };
+                        // Also require the latest volume bar to pass, so a pending confirmation cannot use stale gate state.
+                        let current_volume_ok = !cfg.volume_gate || (syms[p.sym].qv24[i] >= cfg.min_quote_volume_24h && syms[p.sym].tr24[i] >= cfg.min_trades_24h as f64);
+                        let ctx = GateContext {
+                            now: t_close, armed: true,
+                            regime_ok: d.state.is_trade_state() && allowed_universe && syms[p.sym].vg_in && current_volume_ok,
+                            regime_side_ok: d.side_ok(p.sig.side) && state.dir() == p.sig.side.sign() as i8,
+                            regime_max_pos: d.max_positions as usize,
+                            open_positions: open.len(), pending_entries: keep.len() + remaining.len(),
+                            symbol_busy: false, equity: wallet + upnl, spread_bps: None,
+                        };
+                        if crosses { bump(&mut skips, "OFCC_POST_ONLY_CROSS"); }
+                        else if let Err(reason) = risk.check_gates(&ctx, (p.entry - p.sl).abs() / p.entry, rc) { bump(&mut skips, reason.code()); }
+                        else { p.ofcc_watch = None; keep.push(p); }
+                    }
+                    Outcome::Rejected => bump(&mut skips, "OFCC_REJECTED"),
+                    Outcome::Expired => bump(&mut skips, "EXPIRED"),
+                }
+                continue;
+            }
             let penetrated = if s > 0.0 { b.low <= p.entry - p.tick } else { b.high >= p.entry + p.tick };
             if penetrated {
                 let fill = p.entry;
@@ -363,6 +452,11 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             }
         }
 
+        // A label from this bar is stored with the bar close, and is only eligible on a later bar.
+        if cfg.params.s5_knn_enabled {
+            knn_memory.extend(trades[knn_seen..].iter().filter_map(|t| knn_sample(t, &syms)));
+            knn_seen = trades.len();
+        }
         // --- 5. keputusan di close bar
         let dec = &timeline.decisions[kk];
         bump(&mut regime_bars, dec.state.as_str());
@@ -420,6 +514,12 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                     bump(&mut skips, "VOLUME_GATE");
                     continue;
                 }
+                if sig.strategy == StrategyId::S5Rmp && cfg.params.s5_knn_enabled {
+                    let side_series = if sig.side == Side::Long { &sc.series.long } else { &sc.series.short };
+                    let grade = apex_strategies::knn::features_at(side_series, i)
+                        .and_then(|f| apex_strategies::knn::grade(&knn_memory, f, t_close));
+                    if !grade.is_some_and(|g| g.pass) { bump(&mut skips, "S5_KNN_REJECTED_OR_UNAVAILABLE"); continue; }
+                }
                 let prio = cfg.strategies.iter().position(|x| *x == sig.strategy).unwrap_or(99);
                 cands.push((prio, j, sig));
             }
@@ -448,6 +548,12 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind, filters: &si.filters, risk: rc };
             match risk.evaluate_entry(&ctx, &inp, rc) {
                 Ok(sz) => {
+                    let ofcc_watch = if sig.strategy == StrategyId::S1Tfp {
+                        match apex_strategies::ofcc_watch::S1Watch::new(sig.clone()) {
+                            Some(w) => Some(w),
+                            None => { bump(&mut skips, "OFCC_INVALID_SETUP"); continue; }
+                        }
+                    } else { None };
                     let p = Pending {
                         sym: j,
                         entry: to_f64(sz.entry),
@@ -459,6 +565,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                         created_k: kk + 1,
                         tick: to_f64(si.filters.tick_size),
                         regime: dec.state.as_str().to_string(),
+                        ofcc_watch,
                         sig,
                     };
                     match kind {
@@ -585,6 +692,69 @@ mod tests {
     }
 
     #[test]
+    fn knn_stress_keeps_baseline_training_costs() {
+        let mut c = BacktestConfig::default();
+        c.start = 1000;
+        c.params.s5_knn_enabled = true;
+        c.fee_mult = 2.0;
+        c.funding_mult = 2.0;
+        c.extra_slip = 0.0005;
+        let train = knn_training_config(&c, 100);
+        assert_eq!((train.start, train.end), (100, 1000));
+        assert_eq!((train.fee_mult, train.funding_mult, train.extra_slip), (1.0, 1.0, 0.0));
+        assert!(!train.params.s5_knn_enabled);
+        assert_eq!(train.risk.start_balance_usd, c.risk.start_balance_usd);
+    }
+
+    #[test]
+    fn knn_training_never_crosses_holdout() {
+        let day = |x| apex_core::time::parse_ymd(x).unwrap();
+        let first = Some(day("2025-01-01"));
+        assert_eq!(knn_training_start(first, day("2026-05-01")).unwrap(), first);
+        assert!(knn_training_start(first, day("2026-05-02")).is_err());
+        assert!(knn_training_start(first, day("2026-11-01")).is_err());
+    }
+
+    #[test]
+    fn knn_label_is_available_only_after_exit_bar_close() {
+        let m = market(500);
+        let si = &m.symbols[0];
+        let sc = SymCtx { series: SymbolSeries::new(&si.symbol, &si.m15, &si.h1), states: Vec::new(),
+            ot15: si.m15.iter().map(|b| b.open_time).collect(), qv24: Vec::new(), tr24: Vec::new(), vg_in: true, vg_fail: 0, vg_pass: 0 };
+        let signal_ms = si.m15[400].open_time + Tf::M15.ms();
+        let tr = Trade { symbol:si.symbol.clone(), strategy:StrategyId::S5Rmp.code().into(), side:Side::Long,
+            signal_ms, entry_ms:signal_ms+1, exit_ms:signal_ms+Tf::M15.ms()+1, entry:100., sl:97., tp:106.,
+            exit:106., qty:1., notional:100., margin:4., risk_planned:1., fees:0., funding:0., pnl_net:1., r:1.,
+            exit_kind:ExitKind::TakeProfit, regime:"test".into() };
+        let sample = knn_sample(&tr, &[sc]).expect("valid features");
+        assert_eq!(sample.closed_ms, signal_ms + 2 * Tf::M15.ms());
+        let samples = vec![sample.clone(); 15];
+        assert!(apex_strategies::knn::grade(&samples, sample.features, sample.closed_ms).is_none());
+        assert!(apex_strategies::knn::grade(&samples, sample.features, sample.closed_ms + 1).unwrap().pass);
+    }
+
+    #[test]
+    fn knn_training_replay_ignores_data_after_oos_end() {
+        let first = market(1350);
+        let mut second = market(1350);
+        let cut = 1300;
+        let mut c = cfg(&first, 1000, cut);
+        c.strategies = vec![StrategyId::S5Rmp];
+        c.params.s5_knn_enabled = true;
+        for b in second.btc_m15.iter_mut().skip(cut) { b.open *= 1.2; b.high *= 1.2; b.low *= 1.2; b.close *= 1.2; }
+        second.btc_h1 = apex_indicators::aggregate(&second.btc_m15, Tf::M15, Tf::H1);
+        for sym in &mut second.symbols {
+            for b in sym.m15.iter_mut().skip(cut) { b.open *= 1.2; b.high *= 1.2; b.low *= 1.2; b.close *= 1.2; b.volume *= 5.; }
+            sym.h1 = apex_indicators::aggregate(&sym.m15, Tf::M15, Tf::H1);
+        }
+        let a = run_backtest(&first, &c).unwrap();
+        let b = run_backtest(&second, &c).unwrap();
+        assert_eq!(a.trades, b.trades);
+        assert_eq!(a.signals, b.signals);
+        assert_eq!(a.skips, b.skips);
+    }
+
+    #[test]
     fn deterministic_and_risk_invariants() {
         let m = market(14_000);
         let c = cfg(&m, 4000, 13_999);
@@ -593,6 +763,9 @@ mod tests {
         assert_eq!(a.trades, b.trades);
         assert!(a.trades.len() >= 5, "terlalu sedikit trade sintetis: {} sinyal={:?} skip={:?}", a.trades.len(), a.signals, a.skips);
         for t in &a.trades {
+            if t.strategy == StrategyId::S1Tfp.code() {
+                assert!(t.entry_ms >= t.signal_ms + Tf::M15.ms(), "S1 cannot fill during its confirmation bar: {t:?}");
+            }
             assert!(t.risk_planned >= 0.80 - 1e-9 && t.risk_planned <= 1.0 + 1e-9, "{t:?}");
             let slp = (t.entry - t.sl).abs() / t.entry;
             assert!(slp >= 0.02 - 1e-9 && slp <= 0.04 + 1e-9, "{t:?}");
