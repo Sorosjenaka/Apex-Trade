@@ -28,3 +28,32 @@ Tidak ada order live/testnet, pembacaan .env, perubahan arm/mode, atau penggunaa
 - Rules.md G-02 meminta IS >= 100, VAL >= 60, HOLDOUT >= 40. Runner memeriksa >= 60 pada jendela base gabungan default 2025-02-01 s.d. 2026-05-01; cabang holdout G-11 tidak memeriksa minimum 40 trade. Kekurangan data seharusnya INCONCLUSIVE.
 - G-03, G-04 dan G-07 dinilai dari hasil base jendela gabungan, padahal Rules.md menyebut VAL. G-09 memakai ekspektansi FIT, padahal Rules.md menyebut VAL. Label PASS dari runner ini belum membuktikan terpenuhinya aturan.
 - Output validator tetap NO-GO; tidak ada status strategi yang diubah. Temuan dikirim ke Hermes, pemilik branch, tanpa mengedit worktree mereka. Angka Hermes berasal dari branch sebelum perubahan strategi Codex dan bukan hasil gabungan terbaru.
+
+## 9. Penyelesaian Hermes (2026-11-05) — pengukuran sampel & penutupan T-C1/T-C2
+
+Dikerjakan di worktree ini (`codex/strategies`) atas permintaan user, tanpa mengubah risk rule, arm/mode, config, atau holdout.
+
+### Pengukuran riil pra-holdout (window penuh 2025-01-01 -> 2026-05-01, regime=Reader)
+
+| strategi | sinyal | trade | WR | PF | E[R] | catatan |
+|---|---|---|---|---|---|---|
+| S1_TFP (OFCC aktif) | 297 | **29** | 48,3% | 1,78 | +0,402R | 21 entry ditolak OFCC (16 REJECTED + 5 POST_ONLY_CROSS) |
+| S2_LSR | 2 | 1 | 100% | — | +1,867R | n=1, tidak bermakna |
+| S3_SBR | 11 | 2 | 0% | — | −0,998R | keduanya SL |
+| S4_WSL | 1 | 0 | — | — | — | 1 sinyal, tak jadi trade |
+| S5_RMP (magnet aktif) | 3 | **0** | — | — | — | 3 sinyal = 3 SKIP_REGIME |
+| **ALL** | **314** | **32** | 46,9% | 1,67 | +0,360R | wallet $60 -> $71,33 |
+
+Skip breakdown: SKIP_REGIME 196, SKIP_MAX_POSITIONS 32, EXPIRED 23, OFCC_REJECTED 16, OFCC_POST_ONLY_CROSS 5, SKIP_SL_RANGE 5, SKIP_SYMBOL_BUSY 4, REGIME_SIDE 1. Regime bars: CHOP_NO_TRADE 38.359 dari ~46.560 bar (82%).
+
+### Temuan penutup untuk item "tambah sampel trade tanpa melonggarkan risk rule"
+
+1. **Sampel TIDAK bertambah — port justru menaikkan kualitas, bukan kuantitas.** OFCC menolak 21 entry S1 sehingga trade S1 turun 48 -> 29, tapi PF naik 1,48 -> 1,78 dan E naik +0,269R -> +0,402R (kualitas per trade lebih tinggi). S5 magnet menekan sinyal 23 -> 3 (filter pool pivot lawan), praktis mengosongkan sampel kNN.
+2. **Pembunuh sampel utama tetap regime CHOP** (82% bar diblok, 196/314 sinyal kena SKIP_REGIME) — bukan risk rule. Satu-satunya knob sah: threshold T-H2 (trend_share_min 15 / adx_max 15 / er_max 0.25, blok turun ke 78,5%) yang ada di branch `hermes/validation` (commit e1cfca8), belum diadopsi ke config (wewenang T-G1).
+3. **kNN tetap belum terukur** — butuh label trade S5; dengan 3 sinyal/16 bulan, sampel tidak akan cukup untuk G-02 (IS>=100/VAL>=60) tanpa perubahan definisi strategi atau universe. Ini temuan riset, bukan bug.
+4. **Angka gabungan** (strategi baru x gate/regime `hermes/validation` + knob T-H2) belum ada — butuh merge `codex/strategies` + `hermes/validation` oleh T-G1 sesuai pembagian kerja (file overlap: `crates/backtest/src/engine.rs`, `crates/market_reader/src/lib.rs`).
+
+### Status tugas
+
+- **T-C2: DONE** — cancel_beyond aktif di live executor + 26 test OMS lulus.
+- **T-C1: DONE dengan temuan** — 4 port selesai (OFCC f1275a9, magnet cc8715c, kNN ca6ee2b, MR-09 shadow 0506dc7/8b3650f/0f09d6a); item "tambah sampel trade" terukur dan terdokumentasi di atas: tidak dapat dinaikkan tanpa knob regime T-H2 (di luar risk rule), yang butuh merge T-G1.
