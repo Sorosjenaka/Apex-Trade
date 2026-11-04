@@ -344,6 +344,8 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
     mgr.boot(now).await?;
     let ids = cfg.enabled();
     let mut vg = VolumeGateTracker::default();
+    // Watches are deliberately in-memory: after restart an unconfirmed setup is discarded.
+    let mut watches: BTreeMap<String, apex_strategies::ofcc_watch::S1Watch> = BTreeMap::new();
     let mut last_close: Ms = 0;
     let mut last_meta = now;
     let mut last_reconcile = now;
@@ -377,7 +379,7 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
         let cur_close = now - now.rem_euclid(Tf::M15.ms());
         if cur_close > last_close && now - cur_close >= 3_000 {
             last_close = cur_close;
-            if let Err(e) = on_bar_close(cfg, &mut mgr, pc, &mut meta, &mut vg, &ids, now).await {
+            if let Err(e) = on_bar_close(cfg, &mut mgr, pc, &mut meta, &mut vg, &ids, &mut watches, now).await {
                 eprintln!("{} siklus 15m gagal: {e}", fmt_utc(now));
             }
             if once {
@@ -397,7 +399,7 @@ async fn mark_prices(pc: &PublicClient) -> anyhow::Result<BTreeMap<String, f64>>
     Ok(v.as_array().into_iter().flatten().map(|p| (p["symbol"].as_str().unwrap_or("").to_string(), num(&p["markPrice"]))).collect())
 }
 
-async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut OrderManager<E>, pc: &PublicClient, meta: &mut LiveMeta, vg: &mut VolumeGateTracker, ids: &[apex_strategies::StrategyId], now: Ms) -> anyhow::Result<()> {
+async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut OrderManager<E>, pc: &PublicClient, meta: &mut LiveMeta, vg: &mut VolumeGateTracker, ids: &[apex_strategies::StrategyId], watches: &mut BTreeMap<String, apex_strategies::ofcc_watch::S1Watch>, now: Ms) -> anyhow::Result<()> {
     let universe = cfg.universe();
     let snap = snapshot(pc, &universe, now).await?;
     let Some(dec) = decide(&snap) else { anyhow::bail!("regime: data kurang") };
@@ -411,6 +413,8 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
     let majors: Vec<String> = meta.qv_rank.iter().filter(|s| *s != "BTCUSDT").take(10).cloned().collect();
     let equity = mgr.ex.wallet_balance().await.unwrap_or(cfg.risk.start_balance_usd);
     println!("{} regime={} long_ok={} short_ok={} max_pos={} equity=${:.2} open={} pending={}", fmt_utc(now), dec.state.as_str(), dec.long_ok, dec.short_ok, dec.max_positions, equity, mgr.open_count(), mgr.pending_count());
+    // Missing symbol data invalidates a setup instead of replaying with incomplete candles.
+    watches.retain(|sym, _| snap.syms.iter().any(|(s, _, _)| s == sym));
     for (sym, m15, h1) in &snap.syms {
         // Replay missed closed bars too, for pending orders surviving a delayed cycle or restart.
         if let Some(created) = mgr.trade_on(sym).map(|t| t.created_ms) {
@@ -429,7 +433,24 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
         let t = m15.len() - 1;
         let states = screener_states(h1, m15, &cfg.screener.regime);
         let state = series.h1_idx_at(t).and_then(|h| states.get(h).copied()).unwrap_or(SymState::Blocked);
-        for sig in evaluate(&series, t, state, ids, &cfg.strategies.params) {
+        let mut candidates: Vec<_> = evaluate(&series, t, state, ids, &cfg.strategies.params).into_iter().map(|s| (s, false)).collect();
+        if let Some(w) = watches.get_mut(sym) {
+            use apex_strategies::ofcc_watch::Outcome;
+            let feature = if w.signal.side == apex_core::types::Side::Long { &series.long.f15 } else { &series.short.f15 };
+            let outcome = w.observe(&m15[t], m15[t].open_time + Tf::M15.ms(), feature.p90_absdelta[t]);
+            match outcome {
+                Outcome::Waiting => {},
+                Outcome::Confirmed => {
+                    let mut signal = w.signal.clone();
+                    signal.ttl_bars = w.remaining_bars();
+                    signal.bar_close_ms = m15[t].open_time + Tf::M15.ms();
+                    watches.remove(sym);
+                    if signal.ttl_bars > 0 { candidates.insert(0, (signal, true)); }
+                }
+                Outcome::Rejected | Outcome::Expired => { watches.remove(sym); }
+            }
+        }
+        for (sig, ofcc_confirmed) in candidates {
             let skip = |r: &str| mgr.audit.log(now, "SKIP", serde_json::json!({"symbol": sym, "strategy": sig.strategy.code(), "reason": r}));
             if !included {
                 skip(SkipReason::VolumeGate.code());
@@ -448,18 +469,33 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
                 now,
                 armed: mgr.mode == ExecMode::Paper || cfg.engine.arm,
                 regime_ok: dec.state.is_trade_state() && dec.max_positions > 0 && in_universe,
-                regime_side_ok: dec.side_ok(sig.side),
+                regime_side_ok: dec.side_ok(sig.side) && state.dir() == sig.side.sign() as i8,
                 regime_max_pos: dec.max_positions as usize,
                 open_positions: mgr.open_count(),
-                pending_entries: mgr.pending_count(),
-                symbol_busy: mgr.symbol_busy(sym),
+                pending_entries: mgr.pending_count() + watches.len(),
+                symbol_busy: mgr.symbol_busy(sym) || watches.contains_key(sym),
                 equity,
                 spread_bps: gm.spread_bps,
             };
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind: sig.kind, filters: &f, risk: &cfg.risk };
             match mgr.book.risk.evaluate_entry(&ctx, &inp, &cfg.risk) {
                 Ok(sz) => {
-                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms: sig.ttl_bars as i64 * Tf::M15.ms(), cancel_beyond: sig.cancel_beyond.map(to_dec) };
+                    if sig.strategy == apex_strategies::StrategyId::S1Tfp && !ofcc_confirmed {
+                        if let Some(w) = apex_strategies::ofcc_watch::S1Watch::new(sig.clone()) {
+                            watches.insert(sym.clone(), w);
+                        } else { skip("OFCC_INVALID_SETUP"); }
+                        continue;
+                    }
+                    if ofcc_confirmed {
+                        let crossed = if sig.side == apex_core::types::Side::Long { to_dec(m15[t].close) <= sz.entry } else { to_dec(m15[t].close) >= sz.entry };
+                        if crossed { skip("OFCC_POST_ONLY_CROSS"); continue; }
+                    }
+                    let mut ttl_ms = sig.ttl_bars as i64 * Tf::M15.ms();
+                    if ofcc_confirmed {
+                        ttl_ms = ttl_ms.saturating_sub((now - sig.bar_close_ms).max(0));
+                        if ttl_ms <= 0 { skip("OFCC_EXPIRED"); continue; }
+                    }
+                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms, cancel_beyond: sig.cancel_beyond.map(to_dec) };
                     match mgr.submit(it, now).await {
                         Ok(cid) => println!("  ENTRY {} {} {:?} cid={cid}", sig.strategy.code(), sym, sig.side),
                         Err(e) => println!("  entry {} {} ditolak: {e}", sig.strategy.code(), sym),

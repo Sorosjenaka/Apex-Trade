@@ -133,6 +133,7 @@ struct Pending {
     created_k: usize,
     tick: f64,
     regime: String,
+    ofcc_watch: Option<apex_strategies::ofcc_watch::S1Watch>,
 }
 
 #[derive(Clone, Debug)]
@@ -300,7 +301,9 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
 
         // --- 3. order pending: fill / expire
         let mut keep = Vec::new();
-        for p in std::mem::take(&mut pending) {
+        // The setup has reserved a slot, but submission after OFCC is a new decision.
+        let mut remaining = std::mem::take(&mut pending).into_iter();
+        while let Some(mut p) = remaining.next() {
             if kk >= p.created_k + p.sig.ttl_bars as usize {
                 bump(&mut skips, "EXPIRED");
                 continue;
@@ -312,6 +315,48 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let si = &mkt.symbols[p.sym];
             let b = &si.m15[i];
             let s = p.sig.side.sign();
+            if let Some(watch) = p.ofcc_watch.as_mut() {
+                use apex_strategies::ofcc_watch::Outcome;
+                let series = &syms[p.sym].series;
+                let feature = if p.sig.side == Side::Long { &series.long.f15 } else { &series.short.f15 };
+                match watch.observe(b, t_close, feature.p90_absdelta[i]) {
+                    Outcome::Waiting => keep.push(p),
+                    Outcome::Confirmed => {
+                        // A post-only order cannot be submitted if the close already crosses its limit.
+                        let crosses = if s > 0.0 { b.close <= p.entry } else { b.close >= p.entry };
+                        let d = &timeline.decisions[kk];
+                        let upnl: f64 = open.iter().map(|pos| {
+                            idx[pos.p.sym].map(|j| pos.p.sig.side.sign() * (mkt.symbols[pos.p.sym].m15[j].close - pos.fill) * pos.p.qty).unwrap_or(0.0)
+                        }).sum();
+                        let state = syms[p.sym].series.h1_idx_at(i).map(|h| syms[p.sym].states[h]).unwrap_or(SymState::Blocked);
+                        let allowed_universe = match d.universe {
+                            UniverseScope::All => true,
+                            UniverseScope::None => false,
+                            UniverseScope::Majors => {
+                                let mut v: Vec<(usize, f64)> = (0..syms.len()).filter_map(|j| idx[j].map(|i| (j, syms[j].qv24[i]))).filter(|x| x.1.is_finite()).collect();
+                                v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                                v.into_iter().take(10).any(|(j, _)| j == p.sym)
+                            }
+                        };
+                        // Also require the latest volume bar to pass, so a pending confirmation cannot use stale gate state.
+                        let current_volume_ok = !cfg.volume_gate || (syms[p.sym].qv24[i] >= cfg.min_quote_volume_24h && syms[p.sym].tr24[i] >= cfg.min_trades_24h as f64);
+                        let ctx = GateContext {
+                            now: t_close, armed: true,
+                            regime_ok: d.state.is_trade_state() && allowed_universe && syms[p.sym].vg_in && current_volume_ok,
+                            regime_side_ok: d.side_ok(p.sig.side) && state.dir() == p.sig.side.sign() as i8,
+                            regime_max_pos: d.max_positions as usize,
+                            open_positions: open.len(), pending_entries: keep.len() + remaining.len(),
+                            symbol_busy: false, equity: wallet + upnl, spread_bps: None,
+                        };
+                        if crosses { bump(&mut skips, "OFCC_POST_ONLY_CROSS"); }
+                        else if let Err(reason) = risk.check_gates(&ctx, (p.entry - p.sl).abs() / p.entry, rc) { bump(&mut skips, reason.code()); }
+                        else { p.ofcc_watch = None; keep.push(p); }
+                    }
+                    Outcome::Rejected => bump(&mut skips, "OFCC_REJECTED"),
+                    Outcome::Expired => bump(&mut skips, "EXPIRED"),
+                }
+                continue;
+            }
             let penetrated = if s > 0.0 { b.low <= p.entry - p.tick } else { b.high >= p.entry + p.tick };
             if penetrated {
                 let fill = p.entry;
@@ -448,6 +493,12 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind, filters: &si.filters, risk: rc };
             match risk.evaluate_entry(&ctx, &inp, rc) {
                 Ok(sz) => {
+                    let ofcc_watch = if sig.strategy == StrategyId::S1Tfp {
+                        match apex_strategies::ofcc_watch::S1Watch::new(sig.clone()) {
+                            Some(w) => Some(w),
+                            None => { bump(&mut skips, "OFCC_INVALID_SETUP"); continue; }
+                        }
+                    } else { None };
                     let p = Pending {
                         sym: j,
                         entry: to_f64(sz.entry),
@@ -459,6 +510,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                         created_k: kk + 1,
                         tick: to_f64(si.filters.tick_size),
                         regime: dec.state.as_str().to_string(),
+                        ofcc_watch,
                         sig,
                     };
                     match kind {
@@ -593,6 +645,9 @@ mod tests {
         assert_eq!(a.trades, b.trades);
         assert!(a.trades.len() >= 5, "terlalu sedikit trade sintetis: {} sinyal={:?} skip={:?}", a.trades.len(), a.signals, a.skips);
         for t in &a.trades {
+            if t.strategy == StrategyId::S1Tfp.code() {
+                assert!(t.entry_ms >= t.signal_ms + Tf::M15.ms(), "S1 cannot fill during its confirmation bar: {t:?}");
+            }
             assert!(t.risk_planned >= 0.80 - 1e-9 && t.risk_planned <= 1.0 + 1e-9, "{t:?}");
             let slp = (t.entry - t.sl).abs() / t.entry;
             assert!(slp >= 0.02 - 1e-9 && slp <= 0.04 + 1e-9, "{t:?}");

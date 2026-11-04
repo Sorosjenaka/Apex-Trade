@@ -7,6 +7,14 @@ Commit `b1b8c6a`: cancel_beyond pada bar tertutup, replay bar terlewat, rekonsil
 
 ## T-C1 — dalam pengerjaan
 MR-09: skor shadow multi-timeframe dan deteksi divergence terkonfirmasi ditambahkan; log tidak mengubah gate. Tes `cargo test -p apex-market-reader`: 13 lulus, 0 gagal; `cargo check -p apex` lulus. Tes prefix, mutasi future, dan data tidak sinkron lulus. Ini adaptasi kausal dari sumber, bukan klaim parity: perbandingan numerik dengan Python belum dilakukan; `stage` dalam dokumen belum ada di sumber yang diperiksa dan belum diimplementasikan. Tidak layak disebut port lengkap.
-Tes `cargo test -p apex-strategies`: 4 lulus, 0 gagal. OFCC fill check, magnet dan kNN belum di-port.
+Tes strategi awal 4 lulus. Magnet dan kNN belum di-port.
 
 Review handoff Grok: T-H1/T-H2 belum selesai dan belum commit di worktree Hermes; tidak disentuh karena Hermes masih bekerja. Tidak ada order dikirim, holdout dijalankan, atau perubahan arm/mode. Tidak ada klaim profit.
+
+## Review awal handoff validasi (belum final)
+- Sweep `select_plateau` memakai PF OOS untuk menyaring kandidat grid. Karena OOS ikut memilih kandidat, PF OOS tersebut tidak boleh dilaporkan sebagai evaluasi independen atas kandidat terpilih; butuh pemisahan periode validasi lain atau label sebagai data seleksi.
+- Enam fold menjalankan parameter beku tanpa fitting di masing-masing jendela train; ini evaluasi per enam jendela berurutan, bukan bukti walk-forward re-fit. Belum ada hasil run atau klaim gate lulus.
+- Perubahan T-H1/T-H2 masih dalam worktree Hermes yang aktif; temuan ini berbasis review statis dan belum dicoba di sana.
+
+## OFCC — sedang diuji
+S1 ditunda sampai candle sentuh FVG tertutup; data flow tidak valid atau gap menyebabkan reject. Setelah konfirmasi, risk/regime diperiksa lagi sebelum pengajuan limit; watch yang belum dikonfirmasi hilang saat restart (fail closed). Backtest tidak mengisi pada candle konfirmasi. Empat tes terarah OFCC lulus. `cargo check -p apex` lulus; tes penuh per crate strategi dan backtest masih berjalan. Belum commit.
