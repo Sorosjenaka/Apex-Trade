@@ -7,7 +7,7 @@ use apex_core::num::{to_dec, to_f64};
 use apex_core::risk::{ExitKind, GateContext, RiskState};
 use apex_core::sizing::{EntryKind, SizingInput};
 use apex_core::types::{Bar, Ms, Side, Tf};
-use apex_market_reader::UniverseScope;
+use apex_market_reader::{ChopThresholds, UniverseScope};
 use apex_screener::regime::{classify, ScreenerConfig, ScreenerMachine, SymState, SymbolFeatures};
 use apex_strategies::{evaluate, Signal, StrategyId, StrategyParams, SymbolSeries};
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,9 @@ pub struct BacktestConfig {
     pub volume_gate: bool,
     pub min_quote_volume_24h: f64,
     pub min_trades_24h: u64,
+    /// Ambang klausa CHOP Market Reader. Default = hipotesis dokumen.
+    #[serde(default)]
+    pub chop: ChopThresholds,
 }
 
 impl Default for BacktestConfig {
@@ -74,6 +77,7 @@ impl Default for BacktestConfig {
             volume_gate: true,
             min_quote_volume_24h: 20_000_000.0,
             min_trades_24h: 100_000,
+            chop: ChopThresholds::default(),
         }
     }
 }
@@ -232,7 +236,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
     let close_times: Vec<Ms> = ks.iter().map(|&i| mkt.btc_m15[i].open_time + Tf::M15.ms()).collect();
     let alts: Vec<AltInput> = mkt.symbols.iter().filter(|s| s.symbol != "BTCUSDT").map(|s| AltInput { h1: &s.h1 }).collect();
     let timeline = match cfg.regime_mode {
-        RegimeMode::Reader => RegimeTimeline::build(&mkt.btc_m15, &mkt.btc_h1, mkt.dom_h1.as_deref(), &alts, &close_times, cfg.cap_on_proxy),
+        RegimeMode::Reader => RegimeTimeline::build(&mkt.btc_m15, &mkt.btc_h1, mkt.dom_h1.as_deref(), &alts, &close_times, cfg.cap_on_proxy, cfg.chop),
         RegimeMode::ScreenerOnly => RegimeTimeline::permissive(&close_times),
     };
     let mut syms: Vec<SymCtx> = mkt
@@ -403,7 +407,8 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             }
             let penetrated = if s > 0.0 { b.low <= p.entry - p.tick } else { b.high >= p.entry + p.tick };
             if penetrated {
-                let fill = p.entry;
+                // Baseline extra_slip = 0 → fill di limit. Stress G-05 menggeser fill berlawanan arah.
+                let fill = p.entry * (1.0 + s * cfg.extra_slip);
                 let mut pos = Position { entry_ms: t_open, fill, fee_in: fill * p.qty * fee_m, funding: 0.0, fill_k: kk, p };
                 // bar fill: SL boleh kena (konservatif), TP tidak
                 let sl_hit = if s > 0.0 { b.low <= pos.p.sl } else { b.high >= pos.p.sl };

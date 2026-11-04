@@ -91,15 +91,20 @@ impl RegimeDecision {
     }
 }
 
-/// Aturan pertama yang cocok menang.
+/// Aturan pertama yang cocok menang. Ambang CHOP = default.
 pub fn raw_state(s: &ReaderSnapshot) -> (RegimeState, Vec<String>) {
+    raw_state_with(s, &ChopThresholds::default())
+}
+
+/// Sama dengan `raw_state`, dengan ambang CHOP eksplisit (sweep plateau, bukan live default).
+pub fn raw_state_with(s: &ReaderSnapshot, th: &ChopThresholds) -> (RegimeState, Vec<String>) {
     if !s.data_ok {
         return (RegimeState::DataInvalid, s.data_reasons.clone());
     }
     if s.shock {
         return (RegimeState::ShockHalt, vec!["SHOCK".into()]);
     }
-    let chop = (s.adx_1h < 18.0 && s.er_15m < 0.25) || s.trend_share < 20.0;
+    let chop = th.is_chop(s.adx_1h, s.er_15m, s.trend_share);
     let expanding = s.atr_pctile_1h >= 40.0;
     if chop || !expanding || s.btc_trend == Trend::None {
         let mut r = Vec::new();
@@ -123,6 +128,27 @@ pub fn raw_state(s: &ReaderSnapshot) -> (RegimeState, Vec<String>) {
     (RegimeState::BtcLed, vec![format!("btc_trend={:?} dom={:?}", s.btc_trend, s.dom_dir)])
 }
 
+/// Ambang klausa CHOP di RG-2. Default = hipotesis MARKET_READER.md (ADX 18, ER 0,25, trend share 20%).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChopThresholds {
+    pub adx_max: f64,
+    pub er_max: f64,
+    pub trend_share_min: f64,
+}
+
+impl Default for ChopThresholds {
+    fn default() -> Self {
+        Self { adx_max: 18.0, er_max: 0.25, trend_share_min: 20.0 }
+    }
+}
+
+impl ChopThresholds {
+    /// `CHOP` ⇔ (ADX 1h di bawah adx_max DAN ER 15m di bawah er_max) ATAU trend share di bawah trend_share_min.
+    pub fn is_chop(self, adx_1h: f64, er_15m: f64, trend_share: f64) -> bool {
+        (adx_1h < self.adx_max && er_15m < self.er_max) || trend_share < self.trend_share_min
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RegimeMachine {
     pub state: Option<RegimeState>,
@@ -133,6 +159,7 @@ pub struct RegimeMachine {
     pub shock_until: Ms,
     /// Arah BTC saat BTC_LED (searah btc_trend).
     pub btc_dir: i8,
+    pub chop: ChopThresholds,
 }
 
 pub const DWELL_MS: Ms = 30 * 60_000;
@@ -145,7 +172,7 @@ impl RegimeMachine {
         if s.shock {
             self.shock_until = now + SHOCK_HOLD_MS;
         }
-        let (mut raw, mut reasons) = raw_state(s);
+        let (mut raw, mut reasons) = raw_state_with(s, &self.chop);
         if raw != RegimeState::DataInvalid && now < self.shock_until {
             raw = RegimeState::ShockHalt;
             reasons = vec![format!("SHOCK hold sampai {}", apex_core::time::fmt_utc(self.shock_until))];
@@ -265,6 +292,22 @@ mod tests {
         let mut s = snap(0);
         s.trend_share = 10.0;
         assert_eq!(raw_state(&s).0, RegimeState::ChopNoTrade);
+    }
+
+    #[test]
+    fn chop_threshold_overrides_default() {
+        let mut s = snap(0);
+        s.trend_share = 12.0;
+        assert_eq!(raw_state(&s).0, RegimeState::ChopNoTrade);
+        let loose = ChopThresholds { trend_share_min: 10.0, ..ChopThresholds::default() };
+        assert_eq!(raw_state_with(&s, &loose).0, RegimeState::RiskOnAlts);
+        s.trend_share = 40.0;
+        s.adx_1h = 30.0;
+        s.er_15m = 0.5;
+        let tight = ChopThresholds { trend_share_min: 50.0, ..ChopThresholds::default() };
+        assert_eq!(raw_state_with(&s, &tight).0, RegimeState::ChopNoTrade);
+        assert!(ChopThresholds::default().is_chop(10.0, 0.10, 40.0));
+        assert!(!ChopThresholds { adx_max: 8.0, er_max: 0.05, trend_share_min: 5.0 }.is_chop(10.0, 0.10, 40.0));
     }
 
     #[test]

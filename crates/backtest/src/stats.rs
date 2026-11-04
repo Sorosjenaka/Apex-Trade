@@ -213,6 +213,29 @@ pub fn psr(rets: &[f64], sr_star: f64) -> f64 {
     norm_cdf((sr - sr_star) * ((rets.len() - 1) as f64).sqrt() / den)
 }
 
+/// Sharpe per-trade (mean / simpangan baku). Kosong atau sd 0 → 0.
+pub fn sharpe_ratio(x: &[f64]) -> f64 {
+    if x.len() < 2 {
+        return 0.0;
+    }
+    let (m, sd, _, _) = moments(x);
+    if sd == 0.0 {
+        0.0
+    } else {
+        m / sd
+    }
+}
+
+/// Variansi sampel (pembagi n−1). Kurang dari 2 titik → 0.
+pub fn sample_variance(x: &[f64]) -> f64 {
+    if x.len() < 2 {
+        return 0.0;
+    }
+    let n = x.len() as f64;
+    let m = x.iter().sum::<f64>() / n;
+    x.iter().map(|a| (a - m).powi(2)).sum::<f64>() / (n - 1.0)
+}
+
 /// Deflated Sharpe: PSR dengan SR* = E[max SR] dari `n_trials` trial (variansi SR antar trial `var_sr`).
 pub fn dsr(rets: &[f64], n_trials: usize, var_sr: f64) -> f64 {
     let n = n_trials.max(2) as f64;

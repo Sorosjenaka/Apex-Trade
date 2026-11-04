@@ -1,4 +1,5 @@
 /target
+/target-msvc/
 .env
 .env.*
 !.env.example

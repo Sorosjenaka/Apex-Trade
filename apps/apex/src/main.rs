@@ -45,6 +45,9 @@ struct BtOpts {
     filters: Option<PathBuf>,
     #[arg(long)]
     no_volume_gate: bool,
+    /// jangan ulang sweep CHOP; baca validation_summary.json
+    #[arg(long)]
+    gates_only: bool,
 }
 
 #[derive(Subcommand)]
@@ -73,7 +76,7 @@ enum Cmd {
         #[arg(long)]
         per_strategy: bool,
     },
-    /// Gate validasi G-02..G-10 per strategi
+    /// Gate validasi G-02..G-11 per strategi (G-11 terkunci kecuali --unlock-holdout)
     Validate {
         #[command(flatten)]
         o: BtOpts,
@@ -105,7 +108,7 @@ enum Cmd {
 }
 
 fn to_bt(o: BtOpts) -> bt::BtArgs {
-    bt::BtArgs { from: o.from, to: o.to, strategies: o.strategies, data: o.data, out: o.out, regime: o.regime, stress: o.stress, unlock_holdout: o.unlock_holdout, filters: o.filters, no_volume_gate: o.no_volume_gate }
+    bt::BtArgs { from: o.from, to: o.to, strategies: o.strategies, data: o.data, out: o.out, regime: o.regime, stress: o.stress, unlock_holdout: o.unlock_holdout, filters: o.filters, no_volume_gate: o.no_volume_gate, gates_only: o.gates_only }
 }
 
 #[tokio::main]
