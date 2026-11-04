@@ -546,3 +546,34 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod reversal_shadow_tests {
+    use super::*;
+    fn make_bars(n: usize, start: i64, width: i64, base: f64) -> Vec<Bar> {
+        (0..n).map(|i| {
+            let p = base * (1.0 + 0.0001 * i as f64 + 0.03 * (i as f64 / 9.0).sin());
+            Bar { open_time:start + i as i64 * width, open:p, high:p*1.01, low:p*0.99, close:p,
+                volume:100.0, quote_volume:100.0*p, trades:10, taker_buy_base:50.0 }
+        }).collect()
+    }
+    #[test]
+    fn shadow_context_is_available_without_touching_execution() {
+        let h = Tf::H1.ms(); let d = Tf::D1.ms(); let end = 1000*h;
+        let daily_end = end - end.rem_euclid(d);
+        let s = Snapshot {
+            btc_m15:vec![], btc_h1:make_bars(1000,0,h,100.0), dom_h1:None,
+            btc_daily:Some(make_bars(250,daily_end-250*d,d,100.0)),
+            eth_daily:Some(make_bars(250,daily_end-250*d,d,10.0)),
+            syms:vec![("ETHUSDT".into(),vec![],make_bars(1000,0,h,10.0))],
+        };
+        assert!(reversal_shadow(&s).is_some());
+        let details = reversal_details(&s).unwrap();
+        for symbol in ["btc", "eth"] {
+            for tf in ["1h", "2h", "4h", "1d"] {
+                assert!(details[symbol][tf]["stage"].is_string(), "{symbol} {tf}");
+                assert!(details[symbol][tf]["fib_618"].is_number(), "{symbol} {tf}");
+            }
+        }
+    }
+}
