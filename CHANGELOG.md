@@ -17,4 +17,11 @@ Rilis awal (ARM=false, mode=paper, semua strategi NO-GO).
 - S5 tanpa kNN; tanpa filter "magnet"; tanpa cek fill OFCC; MR-09 belum di-port.
 - Regime backtest = proxy BTCDOMUSDT; filter exchange = snapshot 2026-11-04; volume gate backtest parsial (V-01/V-02).
 - Live: pending entry tidak dibatalkan saat harga lari (cancel_beyond) — hanya TTL.
-- Gate G-09 (plateau) dan G-11 (holdout) tidak otomatis.
+- Gate G-09 (plateau) dan G-11 (holdout) tidak otomatis. (dipasang di 0.1.1)
+
+## 0.1.1 — 2026-11-05
+### Diubah
+- `apex validate`: walk-forward anchored 6 fold dijalankan ulang per segmen (bukan potongan satu equity curve), Monte Carlo 10.000 path ukuran 1 tahun, stress G-05 (fee ×2, slip +0,05% termasuk fill limit, funding ×2), DSR dengan N = trial ledger strategi itu + trial sesi + 40 `apex_legacy`.
+- G-09 otomatis pada grid CHOP (regime `trend_share_min` dan screener `chop_range`). Plateau = run yang blok FIT-nya di bawah 87% dan PF OOS-nya tidak turun; ambang yang dilaporkan adalah median run, bukan titik terbaik.
+- Sweep CHOP diperluas: knob regime `adx_max` dan `er_max` ikut di-grid, plus satu run verifikasi kombinasi ketiga knob memakai median plateau masing-masing.
+- G-11 otomatis hanya bila `--unlock-holdout` dan jendela menyentuh 2026-05-01..2026-10-31. Tanpa itu statusnya LOCKED, bukan PASS. Holdout tidak dibuka oleh sweep.

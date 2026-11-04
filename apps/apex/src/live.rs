@@ -86,7 +86,7 @@ pub async fn snapshot(pc: &PublicClient, universe: &[String], now: Ms) -> anyhow
 pub fn decide(s: &Snapshot) -> Option<RegimeDecision> {
     let closes: Vec<Ms> = s.btc_m15.iter().rev().take(96).rev().map(|b| b.open_time + Tf::M15.ms()).collect();
     let alts: Vec<AltInput> = s.syms.iter().map(|x| AltInput { h1: &x.2 }).collect();
-    let tl = RegimeTimeline::build(&s.btc_m15, &s.btc_h1, s.dom_h1.as_deref(), &alts, &closes, false);
+    let tl = RegimeTimeline::build(&s.btc_m15, &s.btc_h1, s.dom_h1.as_deref(), &alts, &closes, false, apex_market_reader::ChopThresholds::default());
     tl.decisions.last().cloned()
 }
 
