@@ -1,3 +1,7 @@
+[build]
+# Satu target folder saja: target-msvc (jangan bikin target/target-msvc-rel baru).
+target-dir = "target-msvc"
+
 [resolver]
 # Pilih versi dependency yang kompatibel dengan rust-version workspace (1.85).
 incompatible-rust-versions = "fallback"
