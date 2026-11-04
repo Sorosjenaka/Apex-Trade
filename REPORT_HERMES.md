@@ -73,5 +73,6 @@ Sekali jalan `apex validate --strategies S1,S5` (FIT 2025-01→2026-01, OOS 2026
 - S1: kurang sampel (48 < 60), fold 6 (Feb–Mei 2026) E −1,003R, konsentrasi simbol/bulan lewat batas, DSR 0.
 - S5: edge hampir nol (PF 1,02) — perlu perbaikan sinyal (T-C1: kNN grader, magnet zone, OFCC — di Codex).
 - **DSR 0,000 di kedua strategi**: `var_sr` antar run sweep sangat besar (S1 ±944, S5 ±155rb) → E[max SR] mendekati tak hingga. Definisi trial SR perlu direview (apakah run sweep beda threshold boleh dihitung satu populasi).
+- **Catatan metodologi (review statis Codex, wajib dibaca bersama angka OOS)**: (1) pemilihan plateau memakai PF OOS untuk menyaring kandidat — angka OOS di laporan ini **bukan evaluasi independen**, butuh outer loop/holdout terpisah untuk klaim final; (2) walk-forward 6 fold memakai parameter beku (tidak refit per fold, sesuai desain awal) — ini bukan WF re-fit standar, jadi ketahanan parameter antar segmen belum teruji. Keduanya memperkuat status NO-GO.
 - Adopsi threshold CHOP ke `config` + status GO/NO-GO = wewenang review Grok Bot (rule: jangan push/merge sendiri).
 - Keluarga screener `chop_range` belum punya plateau (blok ≥ 87% di seluruh grid) — kalau mau diturunkan, grid-nya harus digeser ke bawah 45.
