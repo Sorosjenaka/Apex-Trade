@@ -168,9 +168,18 @@ pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: boo
     }
 }
 
-fn gate(name: &str, ok: bool, detail: String) -> bool {
-    println!("  [{}] {name}: {detail}", if ok { "PASS" } else { "FAIL" });
-    ok
+/// Gate dengan status INCONCLUSIVE saat sampel kurang (Rules G-02: kurang -> INCONCLUSIVE).
+/// sample_ok=false -> label INCONCLUSIVE dan tidak boleh dihitung lulus (tidak boleh klaim PASS).
+fn gate_v(name: &str, ok: bool, sample_ok: bool, detail: String) -> bool {
+    let tag = if !sample_ok { "INCONCLUSIVE" } else if ok { "PASS" } else { "FAIL" };
+    println!("  [{tag}] {name}: {detail}");
+    ok && sample_ok
+}
+
+/// Trade dengan exit_ms di [from, to) -- memisahkan segmen IS/VAL (Rules G-02..G-04, G-07).
+/// Atribusi berdasar waktu exit: PnL terealisasi di segmen saat trade ditutup.
+fn seg_trades(trades: &[Trade], from: i64, to: i64) -> Vec<Trade> {
+    trades.iter().filter(|t| t.exit_ms >= from && t.exit_ms < to).cloned().collect()
 }
 
 fn fnum(x: f64) -> String {
@@ -222,6 +231,7 @@ struct Row {
     fit_trades: usize,
     oos_trades: usize,
     fit_e_by: BTreeMap<String, f64>,
+    oos_e_by: BTreeMap<String, f64>,
     oos_pf_by: BTreeMap<String, f64>,
 }
 
@@ -283,6 +293,7 @@ fn row_from(threshold: f64, fit: &BacktestReport, oos: &BacktestReport, block: i
         fit_trades: fit.metrics.trades,
         oos_trades: oos.metrics.trades,
         fit_e_by: emap(fit),
+        oos_e_by: emap(oos),
         oos_pf_by: pmap(oos),
     }
 }
@@ -296,7 +307,7 @@ fn sweep_points(rows: &[Row]) -> Vec<SweepPoint> {
 }
 
 fn print_plateau(label: &str, rows: &[Row], choice: &PlateauChoice, baseline: f64) {
-    println!("\n== Plateau {label} | baseline={baseline} | blok FIT < 87%, PF OOS tidak turun, G-09 pada FIT");
+    println!("\n== Plateau {label} | baseline={baseline} | blok FIT < 87%, PF OOS tidak turun, G-09 pada VAL (E_OOS)");
     println!("  {:<8} {:>8} {:>8} {:>8} {:>8} {:>7} {:>7}", "th", "blokFIT", "blokOOS", "E_fit", "PF_oos", "trFIT", "trOOS");
     for (i, r) in rows.iter().enumerate() {
         let mark = if choice.run.contains(&i) { "*" } else { " " };
@@ -325,6 +336,7 @@ fn rows_json(rows: &[Row]) -> serde_json::Value {
             "fit_trades": r.fit_trades,
             "oos_trades": r.oos_trades,
             "fit_e_by": r.fit_e_by.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(fnum(*v)))).collect::<serde_json::Map<String, serde_json::Value>>(),
+            "oos_e_by": r.oos_e_by.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(fnum(*v)))).collect::<serde_json::Map<String, serde_json::Value>>(),
             "oos_pf_by": r.oos_pf_by.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(fnum(*v)))).collect::<serde_json::Map<String, serde_json::Value>>(),
         })
     }).collect())
@@ -366,6 +378,7 @@ fn rows_from_json(v: &serde_json::Value) -> anyhow::Result<Vec<Row>> {
         fit_trades: r["fit_trades"].as_u64().unwrap_or(0) as usize,
         oos_trades: r["oos_trades"].as_u64().unwrap_or(0) as usize,
         fit_e_by: map_num(&r["fit_e_by"]),
+        oos_e_by: map_num(&r["oos_e_by"]),
         oos_pf_by: map_num(&r["oos_pf_by"]),
     }).collect())
 }
@@ -424,8 +437,8 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             let m = &r.metrics;
             println!("\n== G-11 {} | {} → {}", id.code(), fmt_utc(c.start), fmt_utc(c.end));
             print_metrics("holdout", m);
-            let ok = ho && g11_pass(m.expectancy_r, m.profit_factor);
-            gate("G-11 holdout E>0 & PF≥1.10", ok, format!("{:+.3}R / {}", m.expectancy_r, pf_print(m.profit_factor)));
+            let ok = ho && m.trades >= 40 && g11_pass(m.expectancy_r, m.profit_factor);
+            gate_v("G-11 holdout trades≥40 & E>0 & PF≥1.10 (Rules G-02: HOLDOUT≥40)", ok, m.trades >= 40, format!("{} trade (min 40), {:+.3}R / {}", m.trades, m.expectancy_r, pf_print(m.profit_factor)));
             println!("  ==> {} : NO-GO{}", id.code(), if ok { " (G-11 lolos angka; status tetap NO-GO sampai review user)" } else { "" });
             gates.push(serde_json::json!({"strategy": id.code(), "g11": ok, "e": fnum(m.expectancy_r), "pf": fnum(m.profit_factor), "trades": m.trades}));
         }
@@ -589,9 +602,17 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         }
         let wf = walk_forward_gate(&fold_e);
         let m = &r.metrics;
-        let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect();
-        let per_year = trades_per_year(rvec.len(), c.end - c.start);
-        let mc = monte_carlo(&rvec, per_year, 10_000, cfg.risk.start_balance_usd, cfg.risk.equity_floor_usd, 42);
+        // Segmen IS/VAL (Rules G-02..G-04, G-07): IS = exit sebelum OOS_FROM, VAL = exit mulai OOS_FROM.
+        let oos_from = parse_ymd(OOS_FROM).unwrap_or(c.end);
+        let is_t = seg_trades(&r.trades, i64::MIN, oos_from);
+        let val_t = seg_trades(&r.trades, oos_from, i64::MAX);
+        let m_val = Metrics::from_trades(&val_t, cfg.risk.start_balance_usd);
+        let (n_is, n_val) = (is_t.len(), val_t.len());
+        let g02_ok = n_is >= 100 && n_val >= 60;
+        let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect(); // G-08 (DSR): jendela penuh, Rules tak spesifikasi segmen
+        let rvec_val: Vec<f64> = val_t.iter().map(|t| t.r).collect(); // G-07: bootstrap urutan trade VAL
+        let per_year = trades_per_year(rvec_val.len(), (c.end - oos_from).max(1));
+        let mc = monte_carlo(&rvec_val, per_year, 10_000, cfg.risk.start_balance_usd, cfg.risk.equity_floor_usd, 42);
         let prior = priors.get(id.code()).copied().unwrap_or(0);
         let session_n = session.runs.get(id.code()).copied().unwrap_or(0);
         let n_trials = honest_n_trials(prior, session_n);
@@ -600,43 +621,58 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         let d = dsr(&rvec, n_trials, var_sr);
         let (g09_rows, g09_th) = if primary_regime { (&trend_rows, c.chop.trend_share_min) } else { (&screen_rows, c.screener.chop_range) };
         let idx = g09_rows.iter().enumerate().min_by(|(_, a), (_, b)| (a.threshold - g09_th).abs().total_cmp(&(b.threshold - g09_th))).map(|(i, _)| i).unwrap_or(0);
-        let selected_e = g09_rows[idx].fit_e_by.get(id.code()).copied().unwrap_or(0.0);
+        // Rules G-09: ekspektansi VAL -- pakai oos_e_by (bukan fit_e_by).
+        let selected_e = g09_rows[idx].oos_e_by.get(id.code()).copied().unwrap_or(0.0);
         let mut neigh = Vec::new();
         if idx > 0 {
-            neigh.push(g09_rows[idx - 1].fit_e_by.get(id.code()).copied().unwrap_or(0.0));
+            neigh.push(g09_rows[idx - 1].oos_e_by.get(id.code()).copied().unwrap_or(0.0));
         }
         if idx + 1 < g09_rows.len() {
-            neigh.push(g09_rows[idx + 1].fit_e_by.get(id.code()).copied().unwrap_or(0.0));
+            neigh.push(g09_rows[idx + 1].oos_e_by.get(id.code()).copied().unwrap_or(0.0));
         }
         let plateau = plateau_gate(selected_e, &neigh);
         println!("\n== Validate {} | {} → {}", id.code(), fmt_utc(c.start), fmt_utc(c.end));
         print_metrics("base", m);
+        print_metrics("VAL (segmen Rules)", &m_val);
         print_metrics("stress", &rs.metrics);
         let mut all = true;
-        all &= gate("G-02 jumlah trade (≥60 untuk jendela ini)", g02_pass(m.trades, 60), format!("{}", m.trades));
-        all &= gate("G-03 expectancy ≥ +0.10R", g03_pass(m.expectancy_r), format!("{:+.3}R", m.expectancy_r));
-        all &= gate("G-04 PF ≥ 1.25", g04_pass(m.profit_factor), format!("{}", pf_print(m.profit_factor)));
-        all &= gate("G-05 stress fee×2 slip+0.05% funding×2, E≥0.03R & PF≥1.10", g05_pass(rs.metrics.expectancy_r, rs.metrics.profit_factor), format!("{:+.3}R / {}", rs.metrics.expectancy_r, pf_print(rs.metrics.profit_factor)));
-        all &= gate("G-06 WF anchored 6 fold (re-run OOS, param beku) ≥4/6 >0, terburuk ≥ −0.15R", wf.pass, format!("{}/6, terburuk {:+.3}R, folds={}", wf.positive, wf.worst, fold_e.iter().map(|e| format!("{e:+.3}")).collect::<Vec<_>>().join(",")));
-        all &= gate("G-07 MC 10000 path, ukuran 1 tahun, p95 DD ≤ 15R & P(<$40) ≤ 5%", mc.paths == 10_000 && g07_pass(mc.p95_max_dd_r, mc.p_below_floor), format!("paths={} n_year={} p95DD={:.1}R P(<40)={:.1}%", mc.paths, per_year, mc.p95_max_dd_r, mc.p_below_floor * 100.0));
-        all &= gate("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy", g08_pass(d), format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
-        all &= gate("G-09 plateau ≥80% tetangga E_FIT>0 dan median ≥ 50% E terpilih", plateau.pass, format!("tetangga {}/{} positif ({:.0}%), median {:+.3} vs 50%×E {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
-        all &= gate("G-10 konsentrasi simbol ≤40% & bulan ≤35%", g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share), format!("simbol {:.0}% / bulan {:.0}% dari net", m.max_symbol_profit_share * 100.0, m.max_month_profit_share * 100.0));
+        all &= gate_v("G-02 sampel IS≥100 & VAL≥60 (Rules G-02; kurang → INCONCLUSIVE)", g02_ok, g02_ok, format!("IS={} (min 100), VAL={} (min 60), total={}", n_is, n_val, m.trades));
+        all &= gate_v("G-03 expectancy VAL ≥ +0.10R", g03_pass(m_val.expectancy_r), g02_ok, format!("{:+.3}R (VAL {} trade)", m_val.expectancy_r, n_val));
+        all &= gate_v("G-04 PF VAL ≥ 1.25", g04_pass(m_val.profit_factor), g02_ok, format!("{} (VAL)", pf_print(m_val.profit_factor)));
+        all &= gate_v("G-05 stress fee×2 slip+0.05% funding×2, E≥0.03R & PF≥1.10 (jendela penuh)", g05_pass(rs.metrics.expectancy_r, rs.metrics.profit_factor), g02_ok, format!("{:+.3}R / {}", rs.metrics.expectancy_r, pf_print(rs.metrics.profit_factor)));
+        all &= gate_v("G-06 WF anchored 6 fold (re-run OOS, param beku) ≥4/6 >0, terburuk ≥ −0.15R", wf.pass, g02_ok, format!("{}/6, terburuk {:+.3}R, folds={}", wf.positive, wf.worst, fold_e.iter().map(|e| format!("{e:+.3}")).collect::<Vec<_>>().join(",")));
+        all &= gate_v("G-07 MC 10000 path bootstrap trade VAL, ukuran 1 tahun, p95 DD ≤ 15R & P(<$40) ≤ 5%", mc.paths == 10_000 && g07_pass(mc.p95_max_dd_r, mc.p_below_floor), g02_ok, format!("paths={} n_year={} (VAL {} trade) p95DD={:.1}R P(<40)={:.1}%", mc.paths, per_year, n_val, mc.p95_max_dd_r, mc.p_below_floor * 100.0));
+        all &= gate_v("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy", g08_pass(d), g02_ok, format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
+        all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, g02_ok, format!("tetangga {}/{} positif ({:.0}%), median {:+.3} vs 50%×E_VAL {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
+        all &= gate_v("G-10 konsentrasi simbol ≤40% & bulan ≤35%", g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share), g02_ok, format!("simbol {:.0}% / bulan {:.0}% dari net", m.max_symbol_profit_share * 100.0, m.max_month_profit_share * 100.0));
         let g11_ok = if ho {
-            let ok = g11_pass(m.expectancy_r, m.profit_factor);
-            gate("G-11 holdout E>0 & PF≥1.10", ok, format!("{:+.3}R / {}", m.expectancy_r, pf_print(m.profit_factor)));
+            let ok = m.trades >= 40 && g11_pass(m.expectancy_r, m.profit_factor);
+            gate_v("G-11 holdout trades≥40 & E>0 & PF≥1.10 (Rules G-02: HOLDOUT≥40)", ok, m.trades >= 40, format!("{} trade (min 40), {:+.3}R / {}", m.trades, m.expectancy_r, pf_print(m.profit_factor)));
             ok
         } else {
             println!("  [LOCKED] G-11 holdout 2026-05-01..2026-10-31 tidak dijalankan. Syarat bila dibuka sekali: E>0 dan PF≥1.10. Bukan PASS.");
             false
         };
         println!("  G-01: celah data backtest={}. Checksum & prefix-test tidak dihitung di perintah ini.", r.data_gaps);
-        println!("  ==> {} : NO-GO{}", id.code(), if all && !g11_ok { " (gate selain G-11 lolos; holdout terkunci, bukan GO)" } else if all && g11_ok { " (angka G-11 lolos; status tetap NO-GO sampai review user)" } else { "" });
+        let suffix = if !g02_ok {
+            " (G-02 INCONCLUSIVE: sampel IS/VAL kurang — hasil gate lain tidak sah sebagai validasi aturan)"
+        } else if all && !g11_ok {
+            " (gate selain G-11 lolos; holdout terkunci, bukan GO)"
+        } else if all && g11_ok {
+            " (angka G-11 lolos; status tetap NO-GO sampai review user)"
+        } else {
+            ""
+        };
+        println!("  ==> {} : NO-GO{}", id.code(), suffix);
         gate_rows.push(serde_json::json!({
             "strategy": id.code(),
             "trades": m.trades,
+            "is_trades": n_is,
+            "val_trades": n_val,
             "e": fnum(m.expectancy_r),
+            "val_e": fnum(m_val.expectancy_r),
             "pf": fnum(m.profit_factor),
+            "val_pf": fnum(m_val.profit_factor),
             "net_usd": fnum(m.net_usd),
             "max_dd_r": fnum(m.max_dd_r),
             "max_dd_usd": fnum(m.max_dd_usd),
@@ -689,5 +725,44 @@ mod tests {
         assert_eq!(c.funding_mult, 2.0);
         assert!((c.extra_slip - 0.0005).abs() < 1e-15);
         assert_eq!(c.market_slip, base_market);
+    }
+
+    #[test]
+    fn seg_trades_splits_by_exit_ms() {
+        use apex_core::risk::ExitKind;
+        use apex_core::types::Side;
+        let mk = |exit_ms: i64| Trade {
+            symbol: "XUSDT".into(),
+            strategy: "S1_TFP".into(),
+            side: Side::Long,
+            signal_ms: 0,
+            entry_ms: 0,
+            exit_ms,
+            entry: 100.0,
+            sl: 99.0,
+            tp: 102.0,
+            exit: 101.0,
+            qty: 1.0,
+            notional: 100.0,
+            margin: 4.0,
+            risk_planned: 1.0,
+            fees: 0.1,
+            funding: 0.0,
+            pnl_net: 1.0,
+            r: 1.0,
+            exit_kind: ExitKind::TakeProfit,
+            regime: "TREND".into(),
+        };
+        let tr = vec![mk(100), mk(200), mk(300)];
+        assert_eq!(seg_trades(&tr, i64::MIN, 250).len(), 2);
+        assert_eq!(seg_trades(&tr, 250, i64::MAX).len(), 1);
+    }
+
+    #[test]
+    fn gate_v_inconclusive_when_sample_short() {
+        // ok=true tapi sampel kurang -> TIDAK boleh PASS
+        assert!(!gate_v("x", true, false, "d".into()));
+        assert!(gate_v("x", true, true, "d".into()));
+        assert!(!gate_v("x", false, true, "d".into()));
     }
 }
