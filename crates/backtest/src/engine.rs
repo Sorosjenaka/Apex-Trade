@@ -7,7 +7,7 @@ use apex_core::num::{to_dec, to_f64};
 use apex_core::risk::{ExitKind, GateContext, RiskState};
 use apex_core::sizing::{EntryKind, SizingInput};
 use apex_core::types::{Bar, Ms, Side, Tf};
-use apex_market_reader::{ChopThresholds, UniverseScope};
+use apex_market_reader::{ChopThresholds, RegimeDecision, RegimeState, UniverseScope};
 use apex_screener::regime::{classify, ScreenerConfig, ScreenerMachine, SymState, SymbolFeatures};
 use apex_strategies::{evaluate, Signal, StrategyId, StrategyParams, SymbolSeries};
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,10 @@ use std::collections::BTreeMap;
 pub struct SymbolInput {
     pub symbol: String,
     pub m15: Vec<Bar>,
+    pub m5: Option<Vec<Bar>>,
     pub h1: Vec<Bar>,
+    /// Exchange onboarding time; first observed bar is a conservative fallback.
+    pub onboard_ms: Option<Ms>,
     pub funding: Vec<(Ms, f64)>,
     pub filters: SymbolFilters,
     /// Simbol boleh ditradingkan (allowlist). BTCUSDT = konteks saja.
@@ -26,6 +29,7 @@ pub struct SymbolInput {
 pub struct MarketInput {
     pub symbols: Vec<SymbolInput>,
     pub btc_m15: Vec<Bar>,
+    pub btc_m5: Option<Vec<Bar>>,
     pub btc_h1: Vec<Bar>,
     pub dom_h1: Option<Vec<Bar>>,
 }
@@ -39,6 +43,9 @@ pub struct BacktestConfig {
     pub strategies: Vec<StrategyId>,
     pub screener: ScreenerConfig,
     pub regime_mode: RegimeMode,
+    /// Research-only entry clock; global reader and symbol regime stay 15m/1h.
+    #[serde(default = "default_entry_tf")]
+    pub entry_tf: Tf,
     /// Terapkan TV-06 (sumber cadangan → max_pos 1) di backtest.
     pub cap_on_proxy: bool,
     /// Maintenance margin rate untuk likuidasi cross (konservatif).
@@ -58,6 +65,27 @@ pub struct BacktestConfig {
     pub chop: ChopThresholds,
 }
 
+fn default_entry_tf() -> Tf { Tf::M15 }
+
+fn closed_reader_decision<'a>(timeline: &'a RegimeTimeline, as_of: Ms, invalid: &'a RegimeDecision) -> &'a RegimeDecision {
+    timeline.times.partition_point(|&time| time <= as_of).checked_sub(1)
+        .filter(|&i| as_of - timeline.times[i] < Tf::M15.ms())
+        .map(|i| &timeline.decisions[i]).unwrap_or(invalid)
+}
+
+fn valid_five_minute_bars(bars: &[Bar]) -> bool {
+    !bars.is_empty() && bars.iter().all(|b| b.open_time.rem_euclid(Tf::M5.ms()) == 0 && b.is_valid())
+        && bars.windows(2).all(|pair| pair[1].open_time - pair[0].open_time == Tf::M5.ms())
+}
+
+fn reader_permits_fill(decision: &RegimeDecision, side: Side) -> bool {
+    decision.state.is_trade_state() && decision.side_ok(side) && decision.universe != UniverseScope::None
+}
+
+fn account_blocks_fill(risk: &RiskState, cfg: &RiskConfig, open: Ms, close: Ms) -> bool {
+    risk.in_cooldown(open) || risk.in_cooldown(close) || risk.daily_stop_active(open, cfg) || risk.daily_stop_active(close, cfg)
+}
+
 impl Default for BacktestConfig {
     fn default() -> Self {
         BacktestConfig {
@@ -68,6 +96,7 @@ impl Default for BacktestConfig {
             strategies: StrategyId::ALL.to_vec(),
             screener: ScreenerConfig::default(),
             regime_mode: RegimeMode::Reader,
+            entry_tf: Tf::M15,
             cap_on_proxy: false,
             mmr: 0.01,
             fee_mult: 1.0,
@@ -161,6 +190,19 @@ struct SymCtx {
     vg_pass: u32,
 }
 
+fn symbol_trending_at_open(symbol: &SymCtx, as_of: Ms, side: Side) -> bool {
+    let hours = symbol.series.h1();
+    hours.partition_point(|b| b.open_time + Tf::H1.ms() <= as_of).checked_sub(1)
+        .filter(|&i| as_of - (hours[i].open_time + Tf::H1.ms()) < Tf::H1.ms())
+        .and_then(|i| symbol.states.get(i))
+        .is_some_and(|state| state.dir() == side.sign() as i8)
+}
+
+fn listed_long_enough(symbol: &SymbolInput, as_of: Ms) -> bool {
+    symbol.onboard_ms.or_else(|| symbol.m15.first().map(|bar| bar.open_time))
+        .is_some_and(|listed| as_of >= listed.saturating_add(30 * 86_400_000))
+}
+
 fn rolling_sum(v: &[f64], n: usize) -> Vec<f64> {
     let mut out = vec![f64::NAN; v.len()];
     let mut s = 0.0;
@@ -231,9 +273,31 @@ fn knn_sample(tr: &Trade, syms: &[SymCtx]) -> Option<apex_strategies::knn::Label
 pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<BacktestReport> {
     let rc = &cfg.risk;
     rc.validate_golden_rules().map_err(|e| anyhow::anyhow!("{e}"))?;
-    // master clock = BTC 15m
-    let ks: Vec<usize> = (0..mkt.btc_m15.len()).filter(|&i| mkt.btc_m15[i].open_time >= cfg.start && mkt.btc_m15[i].open_time + Tf::M15.ms() <= cfg.end).collect();
-    let close_times: Vec<Ms> = ks.iter().map(|&i| mkt.btc_m15[i].open_time + Tf::M15.ms()).collect();
+    if !matches!(cfg.entry_tf, Tf::M5 | Tf::M15) { anyhow::bail!("unsupported entry timeframe"); }
+    if cfg.entry_tf == Tf::M5 && (cfg.regime_mode != RegimeMode::Reader || cfg.strategies.iter().any(|s| !matches!(s, StrategyId::S1Tfp | StrategyId::S3Sbr))) {
+        anyhow::bail!("5m research supports only S1/S3 with the market reader");
+    }
+    let master: &[Bar] = if cfg.entry_tf == Tf::M5 { mkt.btc_m5.as_deref().ok_or_else(|| anyhow::anyhow!("BTC 5m data missing"))? } else { &mkt.btc_m15 };
+    let entries: Vec<&[Bar]> = mkt.symbols.iter().map(|s| if cfg.entry_tf == Tf::M5 { s.m5.as_deref().filter(|bars| !bars.is_empty()).ok_or_else(|| anyhow::anyhow!("{} 5m data missing", s.symbol)) } else { Ok(s.m15.as_slice()) }).collect::<anyhow::Result<_>>()?;
+    if master.is_empty() { anyhow::bail!("master clock data missing"); }
+    if cfg.entry_tf == Tf::M5 && (!valid_five_minute_bars(master) || entries.iter().any(|bars| !valid_five_minute_bars(bars))) {
+        anyhow::bail!("5m data contains a gap, malformed bar or alignment error");
+    }
+    if cfg.entry_tf == Tf::M5 {
+        if master[0].open_time > cfg.start || master[master.len()-1].open_time + Tf::M5.ms() < cfg.end {
+            anyhow::bail!("BTC 5m does not cover the requested window");
+        }
+        for (symbol, bars) in mkt.symbols.iter().zip(entries.iter()) {
+            let first_15m = symbol.m15.first().ok_or_else(|| anyhow::anyhow!("{} 15m data missing", symbol.symbol))?.open_time;
+            if symbol.h1.is_empty() || bars[0].open_time > first_15m.max(cfg.start) + Tf::M15.ms() || bars[bars.len()-1].open_time + Tf::M5.ms() < cfg.end {
+                anyhow::bail!("{} 5m does not cover the requested history", symbol.symbol);
+            }
+        }
+    }
+    let step = cfg.entry_tf.ms();
+    let ks: Vec<usize> = (0..master.len()).filter(|&i| master[i].open_time >= cfg.start && master[i].open_time + step <= cfg.end).collect();
+    // Reader hysteresis advances only on closed 15m bars, even for 5m entries.
+    let close_times: Vec<Ms> = mkt.btc_m15.iter().filter(|b| b.open_time >= cfg.start && b.open_time + Tf::M15.ms() <= cfg.end).map(|b| b.open_time + Tf::M15.ms()).collect();
     let alts: Vec<AltInput> = mkt.symbols.iter().filter(|s| s.symbol != "BTCUSDT").map(|s| AltInput { h1: &s.h1 }).collect();
     let timeline = match cfg.regime_mode {
         RegimeMode::Reader => RegimeTimeline::build(&mkt.btc_m15, &mkt.btc_h1, mkt.dom_h1.as_deref(), &alts, &close_times, cfg.cap_on_proxy, cfg.chop),
@@ -242,15 +306,16 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
     let mut syms: Vec<SymCtx> = mkt
         .symbols
         .iter()
-        .map(|s| {
-            let qv: Vec<f64> = s.m15.iter().map(|b| b.quote_volume).collect();
-            let tr: Vec<f64> = s.m15.iter().map(|b| b.trades as f64).collect();
+        .zip(entries.iter())
+        .map(|(s, entry)| {
+            let qv: Vec<f64> = entry.iter().map(|b| b.quote_volume).collect();
+            let tr: Vec<f64> = entry.iter().map(|b| b.trades as f64).collect();
             SymCtx {
-                series: SymbolSeries::new(&s.symbol, &s.m15, &s.h1),
+                series: SymbolSeries::new_with_tf(&s.symbol, entry, &s.h1, cfg.entry_tf),
                 states: screener_states(&s.h1, &s.m15, &cfg.screener),
-                ot15: s.m15.iter().map(|b| b.open_time).collect(),
-                qv24: rolling_sum(&qv, 96),
-                tr24: rolling_sum(&tr, 96),
+                ot15: entry.iter().map(|b| b.open_time).collect(),
+                qv24: rolling_sum(&qv, (86_400_000 / step) as usize),
+                tr24: rolling_sum(&tr, (86_400_000 / step) as usize),
                 vg_in: false,
                 vg_fail: 0,
                 vg_pass: 0,
@@ -285,20 +350,43 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
     let fee_t = rc.fee_taker * cfg.fee_mult;
     let fee_m = rc.fee_maker * cfg.fee_mult;
     let bump = |m: &mut BTreeMap<String, u64>, k: &str| *m.entry(k.to_string()).or_insert(0) += 1;
+    let no_decision = RegimeDecision { as_of: 0, state: RegimeState::DataInvalid, raw: RegimeState::DataInvalid, long_ok: false, short_ok: false, universe: UniverseScope::None, max_positions: 0, reasons: vec!["15m regime unavailable or stale".into()] };
 
     for (kk, &bi) in ks.iter().enumerate() {
-        let t_open = mkt.btc_m15[bi].open_time;
-        let t_close = t_open + Tf::M15.ms();
+        let t_open = master[bi].open_time;
+        let t_close = t_open + step;
+        let dec = closed_reader_decision(&timeline, t_close, &no_decision);
+        // Fills occur during this bar; only the reader decision known at its open is usable.
+        let dec_at_open = closed_reader_decision(&timeline, t_open, &no_decision);
         // bar tiap simbol pada T
         let idx: Vec<Option<usize>> = syms.iter().map(|s| s.ot15.binary_search(&t_open).ok()).collect();
+        let open_majors: Vec<usize> = if dec_at_open.universe == UniverseScope::Majors {
+            let mut ranked: Vec<(usize, f64)> = syms.iter().enumerate().filter_map(|(j, sc)| {
+                sc.ot15.partition_point(|&t| t + step <= t_open).checked_sub(1)
+                    .map(|i| (j, sc.qv24[i])).filter(|(_, volume)| volume.is_finite())
+            }).collect();
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            ranked.into_iter().take(10).map(|(j, _)| j).collect()
+        } else { vec![] };
+        let allowed_at_open = |j: usize| match dec_at_open.universe {
+            UniverseScope::All => true,
+            UniverseScope::Majors => open_majors.contains(&j),
+            UniverseScope::None => false,
+        };
 
         // --- 0. MARKET entry antrian dari close sebelumnya → isi di open bar ini
         for p in std::mem::take(&mut market_q) {
+            if !reader_permits_fill(dec_at_open, p.sig.side) || !allowed_at_open(p.sym)
+                || !symbol_trending_at_open(&syms[p.sym], t_open, p.sig.side)
+                || open.len() >= dec_at_open.max_positions as usize || account_blocks_fill(&risk, rc, t_open, t_open) {
+                bump(&mut skips, "ENTRY_READER_BLOCKED_AT_OPEN");
+                continue;
+            }
             let Some(i) = idx[p.sym] else {
                 bump(&mut skips, "MARKET_NO_BAR");
                 continue;
             };
-            let b = &mkt.symbols[p.sym].m15[i];
+            let b = &entries[p.sym][i];
             let s = p.sig.side.sign();
             let fill = b.open * (1.0 + s * (cfg.market_slip + cfg.extra_slip));
             // SL/TP relatif harga terencana; bila open sudah melewati SL → langsung keluar SL di open (konservatif)
@@ -314,7 +402,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                 continue;
             };
             let si = &mkt.symbols[pos.p.sym];
-            let b = &si.m15[i];
+            let b = &entries[pos.p.sym][i];
             let s = pos.p.sig.side.sign();
             for &(ft, rate) in si.funding.iter().filter(|(ft, _)| *ft >= t_open && *ft < t_close && *ft > pos.entry_ms) {
                 let _ = ft;
@@ -356,12 +444,18 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                 bump(&mut skips, "EXPIRED");
                 continue;
             }
+            if p.ofcc_watch.is_none() && (!reader_permits_fill(dec_at_open, p.sig.side) || !allowed_at_open(p.sym)
+                || !symbol_trending_at_open(&syms[p.sym], t_open, p.sig.side)
+                || open.len() >= dec_at_open.max_positions as usize || account_blocks_fill(&risk, rc, t_open, t_close)) {
+                bump(&mut skips, "ENTRY_READER_BLOCKED_AT_OPEN");
+                continue;
+            }
             let Some(i) = idx[p.sym] else {
                 keep.push(p);
                 continue;
             };
             let si = &mkt.symbols[p.sym];
-            let b = &si.m15[i];
+            let b = &entries[p.sym][i];
             let s = p.sig.side.sign();
             if let Some(watch) = p.ofcc_watch.as_mut() {
                 use apex_strategies::ofcc_watch::Outcome;
@@ -372,9 +466,9 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                     Outcome::Confirmed => {
                         // A post-only order cannot be submitted if the close already crosses its limit.
                         let crosses = if s > 0.0 { b.close <= p.entry } else { b.close >= p.entry };
-                        let d = &timeline.decisions[kk];
+                        let d = dec;
                         let upnl: f64 = open.iter().map(|pos| {
-                            idx[pos.p.sym].map(|j| pos.p.sig.side.sign() * (mkt.symbols[pos.p.sym].m15[j].close - pos.fill) * pos.p.qty).unwrap_or(0.0)
+                            idx[pos.p.sym].map(|j| pos.p.sig.side.sign() * (entries[pos.p.sym][j].close - pos.fill) * pos.p.qty).unwrap_or(0.0)
                         }).sum();
                         let state = syms[p.sym].series.h1_idx_at(i).map(|h| syms[p.sym].states[h]).unwrap_or(SymState::Blocked);
                         let allowed_universe = match d.universe {
@@ -436,7 +530,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let mut maint = 0.0;
             for pos in &open {
                 if let Some(i) = idx[pos.p.sym] {
-                    let b = &mkt.symbols[pos.p.sym].m15[i];
+                    let b = &entries[pos.p.sym][i];
                     let s = pos.p.sig.side.sign();
                     let adverse = if s > 0.0 { b.low } else { b.high };
                     worst_upnl += s * (adverse - pos.fill) * pos.p.qty;
@@ -447,7 +541,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                 liquidated = true;
                 for pos in std::mem::take(&mut open) {
                     let si = &mkt.symbols[pos.p.sym];
-                    let px = idx[pos.p.sym].map(|i| if pos.p.sig.side.sign() > 0.0 { si.m15[i].low } else { si.m15[i].high }).unwrap_or(pos.fill);
+                    let px = idx[pos.p.sym].map(|i| if pos.p.sig.side.sign() > 0.0 { entries[pos.p.sym][i].low } else { entries[pos.p.sym][i].high }).unwrap_or(pos.fill);
                     let tr = close_trade(&pos, px, t_close, ExitKind::Liquidation, fee_t, si);
                     wallet += tr.pnl_net;
                     risk.record_exit(ExitKind::Liquidation, tr.pnl_net, t_close, rc);
@@ -463,13 +557,12 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             knn_seen = trades.len();
         }
         // --- 5. keputusan di close bar
-        let dec = &timeline.decisions[kk];
         bump(&mut regime_bars, dec.state.as_str());
         let mut upnl = 0.0;
         for pos in &open {
             if let Some(i) = idx[pos.p.sym] {
                 let s = pos.p.sig.side.sign();
-                upnl += s * (mkt.symbols[pos.p.sym].m15[i].close - pos.fill) * pos.p.qty;
+                upnl += s * (entries[pos.p.sym][i].close - pos.fill) * pos.p.qty;
             }
         }
         let equity = wallet + upnl;
@@ -486,6 +579,10 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
         for (j, sc) in syms.iter_mut().enumerate() {
             let Some(i) = idx[j] else { continue };
             if !mkt.symbols[j].tradeable {
+                continue;
+            }
+            // Rules §4.3: a contract must have existed for at least 30 days.
+            if !listed_long_enough(&mkt.symbols[j], t_close) {
                 continue;
             }
             // volume gate parsial (V-01, V-02) + histeresis VG-02 dievaluasi tiap jam
@@ -554,7 +651,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             match risk.evaluate_entry(&ctx, &inp, rc) {
                 Ok(sz) => {
                     let ofcc_watch = if sig.strategy == StrategyId::S1Tfp {
-                        match apex_strategies::ofcc_watch::S1Watch::new(sig.clone()) {
+                        match apex_strategies::ofcc_watch::S1Watch::new_with_tf(sig.clone(), cfg.entry_tf) {
                             Some(w) => Some(w),
                             None => { bump(&mut skips, "OFCC_INVALID_SETUP"); continue; }
                         }
@@ -585,7 +682,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
     // end of data: tutup posisi di close terakhir
     for pos in std::mem::take(&mut open) {
         let si = &mkt.symbols[pos.p.sym];
-        let last = si.m15.iter().rev().find(|b| b.open_time + Tf::M15.ms() <= cfg.end).map(|b| (b.close, b.open_time + Tf::M15.ms())).unwrap_or((pos.fill, cfg.end));
+        let last = entries[pos.p.sym].iter().rev().find(|b| b.open_time + step <= cfg.end).map(|b| (b.close, b.open_time + step)).unwrap_or((pos.fill, cfg.end));
         let tr = close_trade(&pos, last.0, last.1, ExitKind::EndOfData, fee_t, si);
         wallet += tr.pnl_net;
         trades.push(tr);
@@ -651,6 +748,41 @@ fn close_trade(pos: &Position, px: f64, exit_ms: Ms, kind: ExitKind, fee_t: f64,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn five_minute_reader_uses_only_last_closed_fresh_quarter_hour() {
+        let decision = |as_of, state| RegimeDecision { as_of, state, raw: state, long_ok: true, short_ok: true, universe: UniverseScope::All, max_positions: 2, reasons: vec![] };
+        let invalid = decision(0, RegimeState::DataInvalid);
+        let timeline = RegimeTimeline { times: vec![900_000, 1_800_000], decisions: vec![decision(900_000, RegimeState::RiskOnAlts), decision(1_800_000, RegimeState::RiskOff)] };
+        assert_eq!(closed_reader_decision(&timeline, 899_999, &invalid).state, RegimeState::DataInvalid);
+        assert_eq!(closed_reader_decision(&timeline, 1_799_999, &invalid).state, RegimeState::RiskOnAlts);
+        assert_eq!(closed_reader_decision(&timeline, 1_800_000, &invalid).state, RegimeState::RiskOff);
+        assert_eq!(closed_reader_decision(&timeline, 2_700_000, &invalid).state, RegimeState::DataInvalid);
+        let chop = decision(900_000, RegimeState::ChopNoTrade);
+        assert!(!reader_permits_fill(&chop, Side::Long));
+        assert!(!reader_permits_fill(&chop, Side::Short));
+    }
+
+    #[test]
+    fn five_minute_gap_is_rejected() {
+        let mut bars = walk(3, 1, 10.0, 30);
+        for (i, bar) in bars.iter_mut().enumerate() { bar.open_time = i as i64 * Tf::M5.ms(); }
+        assert!(valid_five_minute_bars(&bars));
+        bars[2].open_time += Tf::M5.ms();
+        assert!(!valid_five_minute_bars(&bars));
+    }
+
+    #[test]
+    fn five_minute_pending_fill_obeys_account_stops() {
+        let rules = RiskConfig::default();
+        let mut state = RiskState::new(0);
+        assert!(!account_blocks_fill(&state, &rules, 0, Tf::M5.ms()));
+        state.record_exit(ExitKind::StopLoss, -1.0, Tf::M5.ms(), &rules);
+        assert!(account_blocks_fill(&state, &rules, 0, Tf::M5.ms()));
+        state.cooldown_until = 0;
+        state.daily_sl_count = rules.daily_sl_limit;
+        assert!(account_blocks_fill(&state, &rules, Tf::M5.ms(), 2 * Tf::M5.ms()));
+    }
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
@@ -681,12 +813,13 @@ mod tests {
             let h1 = apex_indicators::aggregate(&m15, Tf::M15, Tf::H1);
             let tick = Decimal::from_str(if p0 > 100.0 { "0.01" } else { "0.0001" }).unwrap();
             let step = Decimal::from_str(if p0 > 100.0 { "0.001" } else { "0.1" }).unwrap();
-            SymbolInput { symbol: sym.into(), funding: (0..n / 32).map(|k| (m15[0].open_time + k as i64 * 28_800_000, 0.0001)).collect(), filters: SymbolFilters::synthetic(sym, tick, step, Decimal::from(5)), h1, m15, tradeable: true }
+            SymbolInput { symbol: sym.into(), funding: (0..n / 32).map(|k| (m15[0].open_time + k as i64 * 28_800_000, 0.0001)).collect(), filters: SymbolFilters::synthetic(sym, tick, step, Decimal::from(5)), onboard_ms: Some(m15[0].open_time - 31 * 86_400_000), h1, m15, m5: None, tradeable: true }
         };
         let btc_h1 = apex_indicators::aggregate(&btc, Tf::M15, Tf::H1);
         MarketInput {
             symbols: vec![mk("AAAUSDT", 11, 2000.0), mk("BBBUSDT", 12, 5.0), mk("CCCUSDT", 13, 1.2), mk("DDDUSDT", 14, 150.0)],
             btc_m15: btc.clone(),
+            btc_m5: None,
             btc_h1,
             dom_h1: None,
         }
@@ -694,6 +827,55 @@ mod tests {
 
     fn cfg(m: &MarketInput, start_i: usize, end_i: usize) -> BacktestConfig {
         BacktestConfig { start: m.btc_m15[start_i].open_time, end: m.btc_m15[end_i].open_time, regime_mode: RegimeMode::ScreenerOnly, volume_gate: false, ..Default::default() }
+    }
+
+    #[test]
+    fn five_minute_replay_fails_closed_without_reader_data() {
+        let mut m = market(400);
+        let expand = |bars: &[Bar]| -> Vec<Bar> {
+            bars.iter().flat_map(|b| (0..3).map(move |i| {
+                let mut out = *b;
+                out.open_time += i * Tf::M5.ms();
+                out.volume /= 3.0;
+                out.quote_volume /= 3.0;
+                out.taker_buy_base /= 3.0;
+                out
+            })).collect()
+        };
+        m.btc_m5 = Some(expand(&m.btc_m15));
+        for symbol in &mut m.symbols { symbol.m5 = Some(expand(&symbol.m15)); }
+        let mut c = cfg(&m, 100, 390);
+        c.entry_tf = Tf::M5;
+        c.regime_mode = RegimeMode::Reader;
+        c.strategies = vec![StrategyId::S1Tfp, StrategyId::S3Sbr];
+        let report = run_backtest(&m, &c).unwrap();
+        assert!(report.regime_bars.get("DATA_INVALID").copied().unwrap_or(0) > 0);
+        assert!(report.trades.is_empty());
+        c.regime_mode = RegimeMode::ScreenerOnly;
+        assert!(run_backtest(&m, &c).is_err());
+    }
+
+    #[test]
+    fn pending_fill_uses_only_closed_hourly_symbol_regime() {
+        let m = market(100);
+        let input = &m.symbols[0];
+        let symbol = SymCtx { series: SymbolSeries::new(&input.symbol, &input.m15, &input.h1), states: vec![SymState::TrendUp; input.h1.len()], ot15: vec![], qv24: vec![], tr24: vec![], vg_in: true, vg_fail: 0, vg_pass: 0 };
+        let close = input.h1[0].open_time + Tf::H1.ms();
+        assert!(!symbol_trending_at_open(&symbol, close - 1, Side::Long));
+        assert!(symbol_trending_at_open(&symbol, close, Side::Long));
+        assert!(!symbol_trending_at_open(&symbol, close, Side::Short));
+    }
+
+    #[test]
+    fn listing_age_is_independent_of_backtest_start() {
+        let mut m = market(100);
+        let symbol = &mut m.symbols[0];
+        let listed = symbol.m15[0].open_time;
+        symbol.onboard_ms = Some(listed);
+        assert!(!listed_long_enough(symbol, listed + 30 * 86_400_000 - 1));
+        assert!(listed_long_enough(symbol, listed + 30 * 86_400_000));
+        symbol.onboard_ms = None;
+        assert!(!listed_long_enough(symbol, listed + 29 * 86_400_000));
     }
 
     #[test]

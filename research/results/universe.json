@@ -4,33 +4,33 @@
       "S1_TFP": 1032
     },
     "all": {
-      "trades": 65,
-      "win_rate": 0.4307692307692308,
-      "profit_factor": 1.4247664999694263,
-      "expectancy_r": 0.24606668803806853,
-      "max_dd_usd": 8.53514743524022,
-      "max_dd_r": 8.733029935690237
+      "trades": 64,
+      "win_rate": 0.4375,
+      "profit_factor": 1.4675931402497007,
+      "expectancy_r": 0.2648516591957056,
+      "max_dd_usd": 7.530398574740225,
+      "max_dd_r": 7.718184050760076
     },
     "is": {
       "trades": 29,
       "win_rate": 0.5172413793103449,
-      "profit_factor": 2.016656366500423,
-      "expectancy_r": 0.4979899314894583,
-      "max_dd_usd": 6.858261291338289,
-      "max_dd_r": 7.013194112252711
+      "profit_factor": 2.023912721032842,
+      "expectancy_r": 0.49596667566602864,
+      "max_dd_usd": 5.8584679912037885,
+      "max_dd_r": 6.013194112252709
     },
     "val": {
-      "trades": 36,
-      "win_rate": 0.3611111111111111,
-      "profit_factor": 1.0676558734001218,
-      "expectancy_r": 0.04312851970222678,
-      "max_dd_usd": 8.53514743524023,
-      "max_dd_r": 8.733029935690238
+      "trades": 35,
+      "win_rate": 0.37142857142857144,
+      "profit_factor": 1.1165668456534106,
+      "expectancy_r": 0.07335635983458069,
+      "max_dd_usd": 7.53039857474023,
+      "max_dd_r": 7.718184050760078
     },
     "by_symbol": {
       "1000BONKUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -0.11149707086039706,
         "metrics": {
           "trades": 3,
@@ -43,7 +43,7 @@
       },
       "1000PEPEUSDT": {
         "trades": 4,
-        "trade_share": 0.06153846153846154,
+        "trade_share": 0.0625,
         "net_usd": -1.121458586950867,
         "metrics": {
           "trades": 4,
@@ -56,7 +56,7 @@
       },
       "1000SHIBUSDT": {
         "trades": 4,
-        "trade_share": 0.06153846153846154,
+        "trade_share": 0.0625,
         "net_usd": -4.03138979756634,
         "metrics": {
           "trades": 4,
@@ -67,22 +67,9 @@
           "max_dd_r": 4.032134636241879
         }
       },
-      "AAVEUSDT": {
-        "trades": 1,
-        "trade_share": 0.015384615384615385,
-        "net_usd": 1.7252612994000018,
-        "metrics": {
-          "trades": 1,
-          "win_rate": 1.0,
-          "profit_factor": null,
-          "expectancy_r": 1.8898875838430025,
-          "max_dd_usd": 0.0,
-          "max_dd_r": 0.0
-        }
-      },
       "ACTUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": -0.9995119103071954,
         "metrics": {
           "trades": 1,
@@ -95,7 +82,7 @@
       },
       "ADAUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": 2.765083579290004,
         "metrics": {
           "trades": 3,
@@ -108,7 +95,7 @@
       },
       "APTUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.8066179292300086,
         "metrics": {
           "trades": 2,
@@ -121,7 +108,7 @@
       },
       "BCHUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": -1.007940447984,
         "metrics": {
           "trades": 1,
@@ -134,7 +121,7 @@
       },
       "BNBUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.4552200855800006,
         "metrics": {
           "trades": 2,
@@ -147,7 +134,7 @@
       },
       "CRVUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.7790644557579993,
         "metrics": {
           "trades": 2,
@@ -160,7 +147,7 @@
       },
       "DOGEUSDT": {
         "trades": 4,
-        "trade_share": 0.06153846153846154,
+        "trade_share": 0.0625,
         "net_usd": 4.681414085062902,
         "metrics": {
           "trades": 4,
@@ -173,7 +160,7 @@
       },
       "ENAUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.8146389759040003,
         "metrics": {
           "trades": 2,
@@ -186,7 +173,7 @@
       },
       "ENSUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": 1.8977593408800026,
         "metrics": {
           "trades": 1,
@@ -199,7 +186,7 @@
       },
       "ETCUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -0.11724575162999584,
         "metrics": {
           "trades": 3,
@@ -212,7 +199,7 @@
       },
       "ETHUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": 1.7709388848395966,
         "metrics": {
           "trades": 1,
@@ -225,7 +212,7 @@
       },
       "GOATUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": 1.912274721511204,
         "metrics": {
           "trades": 1,
@@ -238,7 +225,7 @@
       },
       "HBARUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": -1.0016618028031985,
         "metrics": {
           "trades": 1,
@@ -251,7 +238,7 @@
       },
       "LTCUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": 1.8767164712980027,
         "metrics": {
           "trades": 1,
@@ -264,7 +251,7 @@
       },
       "MOODENGUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": -2.0518335918611985,
         "metrics": {
           "trades": 2,
@@ -277,7 +264,7 @@
       },
       "NEARUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": -0.9465132767999974,
         "metrics": {
           "trades": 1,
@@ -290,7 +277,7 @@
       },
       "NEIROUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 0.8768721339343593,
         "metrics": {
           "trades": 2,
@@ -303,7 +290,7 @@
       },
       "ONDOUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 0.8537875264750041,
         "metrics": {
           "trades": 2,
@@ -316,7 +303,7 @@
       },
       "ORDIUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 0.8989029938000036,
         "metrics": {
           "trades": 2,
@@ -329,7 +316,7 @@
       },
       "SANDUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": -0.9975584882755957,
         "metrics": {
           "trades": 1,
@@ -342,7 +329,7 @@
       },
       "SOLUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -2.9310974973479973,
         "metrics": {
           "trades": 3,
@@ -355,7 +342,7 @@
       },
       "SUIUSDT": {
         "trades": 1,
-        "trade_share": 0.015384615384615385,
+        "trade_share": 0.015625,
         "net_usd": 1.9210162903199999,
         "metrics": {
           "trades": 1,
@@ -368,7 +355,7 @@
       },
       "TIAUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -2.9812448328160066,
         "metrics": {
           "trades": 3,
@@ -380,34 +367,34 @@
         }
       },
       "TRXUSDT": {
-        "trades": 1,
-        "trade_share": 0.015384615384615385,
-        "net_usd": -1.0104453279999959,
+        "trades": 2,
+        "trade_share": 0.03125,
+        "net_usd": 0.8152350696403055,
         "metrics": {
-          "trades": 1,
-          "win_rate": 0.0,
-          "profit_factor": 0.0,
-          "expectancy_r": -1.0114096780955453,
+          "trades": 2,
+          "win_rate": 0.5,
+          "profit_factor": 1.806807698595553,
+          "expectancy_r": 0.40990174343399943,
           "max_dd_usd": 1.0104453279999959,
           "max_dd_r": 1.0114096780955453
         }
       },
       "UNIUSDT": {
-        "trades": 3,
-        "trade_share": 0.046153846153846156,
-        "net_usd": -2.792126767899999,
+        "trades": 2,
+        "trade_share": 0.03125,
+        "net_usd": -1.7873779074000002,
         "metrics": {
-          "trades": 3,
+          "trades": 2,
           "win_rate": 0.0,
           "profit_factor": 0.0,
-          "expectancy_r": -1.0044362848464454,
-          "max_dd_usd": 2.792126767899999,
-          "max_dd_r": 3.0133088545393365
+          "expectancy_r": -0.9992314848045883,
+          "max_dd_usd": 1.7873779074000002,
+          "max_dd_r": 1.9984629696091767
         }
       },
       "WIFUSDT": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -3.0111812100678,
         "metrics": {
           "trades": 3,
@@ -420,7 +407,7 @@
       },
       "WLDUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 0.9121685694300035,
         "metrics": {
           "trades": 2,
@@ -433,7 +420,7 @@
       },
       "XRPUSDT": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.786073817603996,
         "metrics": {
           "trades": 2,
@@ -447,21 +434,21 @@
     },
     "by_month": {
       "2025-02": {
-        "trades": 5,
-        "trade_share": 0.07692307692307693,
-        "net_usd": 0.7569997983301284,
+        "trades": 6,
+        "trade_share": 0.09375,
+        "net_usd": 2.58268019597043,
         "metrics": {
-          "trades": 5,
-          "win_rate": 0.4,
-          "profit_factor": 1.2525444646087684,
-          "expectancy_r": 0.15319201872796645,
+          "trades": 6,
+          "win_rate": 0.5,
+          "profit_factor": 1.8616139512663095,
+          "expectancy_r": 0.4328622097672294,
           "max_dd_usd": 1.9976978525733662,
           "max_dd_r": 1.9980329940676445
         }
       },
       "2025-03": {
         "trades": 5,
-        "trade_share": 0.07692307692307693,
+        "trade_share": 0.078125,
         "net_usd": -4.891296582659794,
         "metrics": {
           "trades": 5,
@@ -474,7 +461,7 @@
       },
       "2025-04": {
         "trades": 8,
-        "trade_share": 0.12307692307692308,
+        "trade_share": 0.125,
         "net_usd": 3.3623245585684063,
         "metrics": {
           "trades": 8,
@@ -486,21 +473,21 @@
         }
       },
       "2025-05": {
-        "trades": 9,
-        "trade_share": 0.13846153846153847,
-        "net_usd": 11.048127722722823,
+        "trades": 8,
+        "trade_share": 0.125,
+        "net_usd": 9.322866423322822,
         "metrics": {
-          "trades": 9,
-          "win_rate": 0.7777777777777778,
-          "profit_factor": 6.5942504332942855,
-          "expectancy_r": 1.2530743877768993,
+          "trades": 8,
+          "win_rate": 0.75,
+          "profit_factor": 5.720659539530098,
+          "expectancy_r": 1.173472738268636,
           "max_dd_usd": 0.999511910307195,
           "max_dd_r": 1.0032698847755377
         }
       },
       "2025-06": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": 3.7931288920679975,
         "metrics": {
           "trades": 2,
@@ -513,7 +500,7 @@
       },
       "2025-07": {
         "trades": 7,
-        "trade_share": 0.1076923076923077,
+        "trade_share": 0.109375,
         "net_usd": 4.512617084396365,
         "metrics": {
           "trades": 7,
@@ -526,7 +513,7 @@
       },
       "2025-08": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": 5.574350760960807,
         "metrics": {
           "trades": 3,
@@ -539,7 +526,7 @@
       },
       "2025-09": {
         "trades": 2,
-        "trade_share": 0.03076923076923077,
+        "trade_share": 0.03125,
         "net_usd": -1.9544537247839973,
         "metrics": {
           "trades": 2,
@@ -552,7 +539,7 @@
       },
       "2025-10": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -0.15705400307959705,
         "metrics": {
           "trades": 3,
@@ -565,7 +552,7 @@
       },
       "2025-11": {
         "trades": 4,
-        "trade_share": 0.06153846153846154,
+        "trade_share": 0.0625,
         "net_usd": -1.1180982955349994,
         "metrics": {
           "trades": 4,
@@ -578,7 +565,7 @@
       },
       "2025-12": {
         "trades": 3,
-        "trade_share": 0.046153846153846156,
+        "trade_share": 0.046875,
         "net_usd": -3.0591108052171974,
         "metrics": {
           "trades": 3,
@@ -591,7 +578,7 @@
       },
       "2026-01": {
         "trades": 8,
-        "trade_share": 0.12307692307692308,
+        "trade_share": 0.125,
         "net_usd": 3.7576670307365694,
         "metrics": {
           "trades": 8,
@@ -604,7 +591,7 @@
       },
       "2026-03": {
         "trades": 4,
-        "trade_share": 0.06153846153846154,
+        "trade_share": 0.0625,
         "net_usd": -3.9953338072110123,
         "metrics": {
           "trades": 4,
@@ -616,16 +603,16 @@
         }
       },
       "2026-04": {
-        "trades": 2,
-        "trade_share": 0.03076923076923077,
-        "net_usd": -2.0087638301499946,
+        "trades": 1,
+        "trade_share": 0.015625,
+        "net_usd": -1.004014969649996,
         "metrics": {
-          "trades": 2,
+          "trades": 1,
           "win_rate": 0.0,
           "profit_factor": 0.0,
-          "expectancy_r": -1.0096479742739852,
-          "max_dd_usd": 2.0087638301499946,
-          "max_dd_r": 2.0192959485479705
+          "expectancy_r": -1.0044500636178106,
+          "max_dd_usd": 1.004014969649996,
+          "max_dd_r": 1.0044500636178106
         }
       }
     },
@@ -639,33 +626,33 @@
       "S3_SBR": 48
     },
     "all": {
-      "trades": 68,
-      "win_rate": 0.4264705882352941,
-      "profit_factor": 1.3999822632895988,
-      "expectancy_r": 0.23353181932868666,
-      "max_dd_usd": 7.649910151257224,
-      "max_dd_r": 7.847200943814002
+      "trades": 67,
+      "win_rate": 0.43283582089552236,
+      "profit_factor": 1.4398848691978559,
+      "expectancy_r": 0.25128858478211036,
+      "max_dd_usd": 7.288072572445783,
+      "max_dd_r": 7.422343010049996
     },
     "is": {
       "trades": 30,
       "win_rate": 0.5,
-      "profit_factor": 1.8810245285269518,
-      "expectancy_r": 0.44805693377314315,
-      "max_dd_usd": 6.858261291338289,
-      "max_dd_r": 7.013194112252711
+      "profit_factor": 1.887792851127621,
+      "expectancy_r": 0.4461011198104945,
+      "max_dd_usd": 5.8584679912037885,
+      "max_dd_r": 6.013194112252709
     },
     "val": {
-      "trades": 38,
-      "win_rate": 0.3684210526315789,
-      "profit_factor": 1.1018142138590346,
-      "expectancy_r": 0.06416988687253684,
-      "max_dd_usd": 7.649910151257224,
-      "max_dd_r": 7.847200943814002
+      "trades": 37,
+      "win_rate": 0.3783783783783784,
+      "profit_factor": 1.1500903012738046,
+      "expectancy_r": 0.09333247529963676,
+      "max_dd_usd": 7.288072572445787,
+      "max_dd_r": 7.422343010049996
     },
     "by_symbol": {
       "1000BONKUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -0.11149707086039706,
         "metrics": {
           "trades": 3,
@@ -678,7 +665,7 @@
       },
       "1000PEPEUSDT": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": -1.121458586950867,
         "metrics": {
           "trades": 4,
@@ -691,7 +678,7 @@
       },
       "1000SHIBUSDT": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": -4.03138979756634,
         "metrics": {
           "trades": 4,
@@ -702,22 +689,9 @@
           "max_dd_r": 4.032134636241879
         }
       },
-      "AAVEUSDT": {
-        "trades": 1,
-        "trade_share": 0.014705882352941176,
-        "net_usd": 1.7252612994000018,
-        "metrics": {
-          "trades": 1,
-          "win_rate": 1.0,
-          "profit_factor": null,
-          "expectancy_r": 1.8898875838430025,
-          "max_dd_usd": 0.0,
-          "max_dd_r": 0.0
-        }
-      },
       "ACTUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": -0.9995119103071954,
         "metrics": {
           "trades": 1,
@@ -730,7 +704,7 @@
       },
       "ADAUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": 2.765083579290004,
         "metrics": {
           "trades": 3,
@@ -743,7 +717,7 @@
       },
       "APTUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 3.8066179292300086,
         "metrics": {
           "trades": 2,
@@ -756,7 +730,7 @@
       },
       "BCHUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": -1.007940447984,
         "metrics": {
           "trades": 1,
@@ -769,7 +743,7 @@
       },
       "BNBUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 3.4552200855800006,
         "metrics": {
           "trades": 2,
@@ -782,7 +756,7 @@
       },
       "CRVUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": 5.663657483571001,
         "metrics": {
           "trades": 3,
@@ -795,7 +769,7 @@
       },
       "DOGEUSDT": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": 4.681414085062902,
         "metrics": {
           "trades": 4,
@@ -808,7 +782,7 @@
       },
       "ENAUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 3.8146389759040003,
         "metrics": {
           "trades": 2,
@@ -821,7 +795,7 @@
       },
       "ENSUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": 1.8977593408800026,
         "metrics": {
           "trades": 1,
@@ -834,7 +808,7 @@
       },
       "ETCUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -0.11724575162999584,
         "metrics": {
           "trades": 3,
@@ -847,7 +821,7 @@
       },
       "ETHUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": 1.7709388848395966,
         "metrics": {
           "trades": 1,
@@ -860,7 +834,7 @@
       },
       "GOATUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": 1.912274721511204,
         "metrics": {
           "trades": 1,
@@ -873,7 +847,7 @@
       },
       "HBARUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": -1.0016618028031985,
         "metrics": {
           "trades": 1,
@@ -886,7 +860,7 @@
       },
       "LTCUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": 1.8767164712980027,
         "metrics": {
           "trades": 1,
@@ -899,7 +873,7 @@
       },
       "MOODENGUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": -2.0518335918611985,
         "metrics": {
           "trades": 2,
@@ -912,7 +886,7 @@
       },
       "NEARUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": -0.9465132767999974,
         "metrics": {
           "trades": 1,
@@ -925,7 +899,7 @@
       },
       "NEIROUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 0.8768721339343593,
         "metrics": {
           "trades": 2,
@@ -938,7 +912,7 @@
       },
       "ONDOUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 0.8537875264750041,
         "metrics": {
           "trades": 2,
@@ -951,7 +925,7 @@
       },
       "ORDIUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -0.10045275002999265,
         "metrics": {
           "trades": 3,
@@ -964,7 +938,7 @@
       },
       "SANDUSDT": {
         "trades": 1,
-        "trade_share": 0.014705882352941176,
+        "trade_share": 0.014925373134328358,
         "net_usd": -0.9975584882755957,
         "metrics": {
           "trades": 1,
@@ -977,7 +951,7 @@
       },
       "SOLUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -2.9310974973479973,
         "metrics": {
           "trades": 3,
@@ -990,7 +964,7 @@
       },
       "SUIUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 0.9231668641440033,
         "metrics": {
           "trades": 2,
@@ -1003,7 +977,7 @@
       },
       "TIAUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -2.9812448328160066,
         "metrics": {
           "trades": 3,
@@ -1015,34 +989,34 @@
         }
       },
       "TRXUSDT": {
-        "trades": 1,
-        "trade_share": 0.014705882352941176,
-        "net_usd": -1.0104453279999959,
+        "trades": 2,
+        "trade_share": 0.029850746268656716,
+        "net_usd": 0.8152350696403055,
         "metrics": {
-          "trades": 1,
-          "win_rate": 0.0,
-          "profit_factor": 0.0,
-          "expectancy_r": -1.0114096780955453,
+          "trades": 2,
+          "win_rate": 0.5,
+          "profit_factor": 1.806807698595553,
+          "expectancy_r": 0.40990174343399943,
           "max_dd_usd": 1.0104453279999959,
           "max_dd_r": 1.0114096780955453
         }
       },
       "UNIUSDT": {
-        "trades": 3,
-        "trade_share": 0.04411764705882353,
-        "net_usd": -2.792126767899999,
+        "trades": 2,
+        "trade_share": 0.029850746268656716,
+        "net_usd": -1.7873779074000002,
         "metrics": {
-          "trades": 3,
+          "trades": 2,
           "win_rate": 0.0,
           "profit_factor": 0.0,
-          "expectancy_r": -1.0044362848464454,
-          "max_dd_usd": 2.792126767899999,
-          "max_dd_r": 3.0133088545393365
+          "expectancy_r": -0.9992314848045883,
+          "max_dd_usd": 1.7873779074000002,
+          "max_dd_r": 1.9984629696091767
         }
       },
       "WIFUSDT": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -3.0111812100678,
         "metrics": {
           "trades": 3,
@@ -1055,7 +1029,7 @@
       },
       "WLDUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 0.9121685694300035,
         "metrics": {
           "trades": 2,
@@ -1068,7 +1042,7 @@
       },
       "XRPUSDT": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 3.786073817603996,
         "metrics": {
           "trades": 2,
@@ -1082,21 +1056,21 @@
     },
     "by_month": {
       "2025-02": {
-        "trades": 5,
-        "trade_share": 0.07352941176470588,
-        "net_usd": 0.7569997983301284,
+        "trades": 6,
+        "trade_share": 0.08955223880597014,
+        "net_usd": 2.58268019597043,
         "metrics": {
-          "trades": 5,
-          "win_rate": 0.4,
-          "profit_factor": 1.2525444646087684,
-          "expectancy_r": 0.15319201872796645,
+          "trades": 6,
+          "win_rate": 0.5,
+          "profit_factor": 1.8616139512663095,
+          "expectancy_r": 0.4328622097672294,
           "max_dd_usd": 1.9976978525733662,
           "max_dd_r": 1.9980329940676445
         }
       },
       "2025-03": {
         "trades": 5,
-        "trade_share": 0.07352941176470588,
+        "trade_share": 0.07462686567164178,
         "net_usd": -4.891296582659794,
         "metrics": {
           "trades": 5,
@@ -1109,7 +1083,7 @@
       },
       "2025-04": {
         "trades": 9,
-        "trade_share": 0.1323529411764706,
+        "trade_share": 0.13432835820895522,
         "net_usd": 2.3644751323924096,
         "metrics": {
           "trades": 9,
@@ -1121,21 +1095,21 @@
         }
       },
       "2025-05": {
-        "trades": 9,
-        "trade_share": 0.1323529411764706,
-        "net_usd": 11.048127722722823,
+        "trades": 8,
+        "trade_share": 0.11940298507462686,
+        "net_usd": 9.322866423322822,
         "metrics": {
-          "trades": 9,
-          "win_rate": 0.7777777777777778,
-          "profit_factor": 6.5942504332942855,
-          "expectancy_r": 1.2530743877768993,
+          "trades": 8,
+          "win_rate": 0.75,
+          "profit_factor": 5.720659539530098,
+          "expectancy_r": 1.173472738268636,
           "max_dd_usd": 0.999511910307195,
           "max_dd_r": 1.0032698847755377
         }
       },
       "2025-06": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": 3.7931288920679975,
         "metrics": {
           "trades": 2,
@@ -1148,7 +1122,7 @@
       },
       "2025-07": {
         "trades": 7,
-        "trade_share": 0.10294117647058823,
+        "trade_share": 0.1044776119402985,
         "net_usd": 4.512617084396365,
         "metrics": {
           "trades": 7,
@@ -1161,7 +1135,7 @@
       },
       "2025-08": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": 5.574350760960807,
         "metrics": {
           "trades": 3,
@@ -1174,7 +1148,7 @@
       },
       "2025-09": {
         "trades": 2,
-        "trade_share": 0.029411764705882353,
+        "trade_share": 0.029850746268656716,
         "net_usd": -1.9544537247839973,
         "metrics": {
           "trades": 2,
@@ -1187,7 +1161,7 @@
       },
       "2025-10": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": -1.1564097469095933,
         "metrics": {
           "trades": 4,
@@ -1200,7 +1174,7 @@
       },
       "2025-11": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": -1.1180982955349994,
         "metrics": {
           "trades": 4,
@@ -1213,7 +1187,7 @@
       },
       "2025-12": {
         "trades": 3,
-        "trade_share": 0.04411764705882353,
+        "trade_share": 0.04477611940298507,
         "net_usd": -3.0591108052171974,
         "metrics": {
           "trades": 3,
@@ -1226,7 +1200,7 @@
       },
       "2026-01": {
         "trades": 9,
-        "trade_share": 0.1323529411764706,
+        "trade_share": 0.13432835820895522,
         "net_usd": 5.642260058549571,
         "metrics": {
           "trades": 9,
@@ -1239,7 +1213,7 @@
       },
       "2026-03": {
         "trades": 4,
-        "trade_share": 0.058823529411764705,
+        "trade_share": 0.05970149253731343,
         "net_usd": -3.9953338072110123,
         "metrics": {
           "trades": 4,
@@ -1251,16 +1225,16 @@
         }
       },
       "2026-04": {
-        "trades": 2,
-        "trade_share": 0.029411764705882353,
-        "net_usd": -2.0087638301499946,
+        "trades": 1,
+        "trade_share": 0.014925373134328358,
+        "net_usd": -1.004014969649996,
         "metrics": {
-          "trades": 2,
+          "trades": 1,
           "win_rate": 0.0,
           "profit_factor": 0.0,
-          "expectancy_r": -1.0096479742739852,
-          "max_dd_usd": 2.0087638301499946,
-          "max_dd_r": 2.0192959485479705
+          "expectancy_r": -1.0044500636178106,
+          "max_dd_usd": 1.004014969649996,
+          "max_dd_r": 1.0044500636178106
         }
       }
     },

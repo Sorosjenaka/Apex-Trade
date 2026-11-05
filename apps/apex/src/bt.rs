@@ -26,8 +26,11 @@ pub struct BtArgs {
 
 pub fn load_market(cfg: &AllConfig, data: &Path, filters_path: &Path) -> anyhow::Result<MarketInput> {
     let filters = crate::cfg::load_filters(filters_path)?;
+    let metadata: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(filters_path)?)?;
+    let onboarding: BTreeMap<&str, i64> = metadata["symbols"].as_array().into_iter().flatten().filter_map(|s| Some((s["symbol"].as_str()?, s["onboardDate"].as_i64()?))).collect();
     let allow = crate::cfg::load_allowlist(&cfg.dir)?;
     let btc_m15 = load_klines(&kline_path(data, "BTCUSDT", Tf::M15))?;
+    let btc_m5 = if cfg.strategies.research_entry_5m { Some(load_klines(&kline_path(data, "BTCUSDT", Tf::M5))?) } else { None };
     let btc_h1 = load_klines(&kline_path(data, "BTCUSDT", Tf::H1))?;
     let dom = load_klines(&kline_path(data, "BTCDOMUSDT", Tf::H1)).ok().filter(|v| !v.is_empty());
     let mut symbols = Vec::new();
@@ -48,9 +51,11 @@ pub fn load_market(cfg: &AllConfig, data: &Path, filters_path: &Path) -> anyhow:
         if !tradeable {
             eprintln!("  [konteks saja] {s}: tidak ada di allowlist crypto");
         }
-        symbols.push(SymbolInput { symbol: s.clone(), m15, h1, funding, filters: f, tradeable });
+        let m5 = if cfg.strategies.research_entry_5m { Some(load_klines(&kline_path(data, &s, Tf::M5))?) } else { None };
+        let onboard_ms = onboarding.get(s.as_str()).copied();
+        symbols.push(SymbolInput { symbol: s.clone(), m15, m5, h1, onboard_ms, funding, filters: f, tradeable });
     }
-    Ok(MarketInput { symbols, btc_m15, btc_h1, dom_h1: dom })
+    Ok(MarketInput { symbols, btc_m15, btc_m5, btc_h1, dom_h1: dom })
 }
 
 pub fn make_cfg(cfg: &AllConfig, a: &BtArgs, ids: Vec<StrategyId>) -> anyhow::Result<BacktestConfig> {
@@ -64,6 +69,7 @@ pub fn make_cfg(cfg: &AllConfig, a: &BtArgs, ids: Vec<StrategyId>) -> anyhow::Re
         strategies: ids,
         screener: cfg.screener.regime.clone(),
         regime_mode: if a.regime == "screener" { RegimeMode::ScreenerOnly } else { RegimeMode::Reader },
+        entry_tf: if cfg.strategies.research_entry_5m { Tf::M5 } else { Tf::M15 },
         volume_gate: !a.no_volume_gate,
         min_quote_volume_24h: cfg.screener.volume_gate.min_quote_volume_24h,
         min_trades_24h: cfg.screener.volume_gate.min_trades_24h,

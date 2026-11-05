@@ -58,7 +58,7 @@ Skip breakdown: SKIP_REGIME 196, SKIP_MAX_POSITIONS 32, EXPIRED 23, OFCC_REJECTE
 - **T-C2: DONE** — cancel_beyond aktif di live executor + 26 test OMS lulus.
 - **T-C1: DONE dengan temuan** — 4 port selesai (OFCC f1275a9, magnet cc8715c, kNN ca6ee2b, MR-09 shadow 0506dc7/8b3650f/0f09d6a); item "tambah sampel trade" terukur dan terdokumentasi di atas: tidak dapat dinaikkan tanpa knob regime T-H2 (di luar risk rule), yang butuh merge T-G1.
 
-## 10. T-C3 — perluasan sampel (sedang dikerjakan)
+## 10. T-C3 — perluasan sampel (ditutup tanpa adopsi)
 
 Setelah izin eksplisit pengguna, master lokal di-fast-forward dari `07a768a` ke `221c94c`; branch `codex/sample` dibuat dari master. Lihat `REPORT_MERGE.md`. Draft Hermes yang belum di-commit tidak diubah atau dimasukkan. Semua strategi tetap NO-GO.
 
@@ -72,17 +72,27 @@ Ranking memakai jumlah quote volume harian pada Desember 2024, sebelum periode u
 
 | Run terpisah | Sinyal | Trade | IS | VAL | WR | PF | E[R] | E VAL | Max DD |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| S1 | 1.032 | 65 | 29 | 36 | 43,08% | 1,425 | +0,246 | +0,043 | $8,54 / 8,73R |
+| S1 | 1.032 | 64 | 29 | 35 | 43,75% | 1,468 | +0,265 | +0,073 | $7,53 / 7,72R |
 | S3 | 48 | 6 | 3 | 3 | 33,33% | 0,976 | −0,035 | −0,030 | $2,00 / 2,09R |
-| Gabungan S1+S3 | 1.080 | 68 | 30 | 38 | 42,65% | 1,400 | +0,234 | +0,064 | $7,65 / 7,85R |
+| Gabungan S1+S3 | 1.080 | 67 | 30 | 37 | 43,28% | 1,440 | +0,251 | +0,093 | $7,29 / 7,42R |
 
-S1 menambah 19 trade VAL dari baseline (17 ke 36), tetapi masih kurang dari 60 dan E VAL turun dari +0,195 menjadi +0,043R, di bawah G-03 +0,10R. IS juga masih 29, di bawah 100. S3 E VAL negatif dengan hanya 3 trade; jangan pilih varian itu sebagai kandidat. S1: beberapa simbol masing-masing maksimum 4/65 trade (6,15%); Mei 2025 9/65 (13,85%). DOGE menghasilkan $4,68 dari laba neto $15,62 (30,0%); Mei 2025 $11,05 dari $15,62 (70,7%), melampaui batas G-10 bulan 35% jika dihitung dengan definisi neto proyek. ETH hanya 1 trade, +$1,77; sampel tidak bermakna. Konsentrasi lengkap setiap simbol/bulan dan statistiknya di `research/results/universe.json`, baseline di `research/results/baseline.json`.
+S1 menambah 18 trade VAL dari baseline (17 ke 35), tetapi masih kurang dari 60 dan E VAL turun dari +0,195 menjadi +0,073R, di bawah G-03 +0,10R. IS juga masih 29, di bawah 100. S3 E VAL negatif dengan hanya 3 trade; jangan pilih varian itu sebagai kandidat. S1: beberapa simbol masing-masing maksimum 4/64 trade (6,25%); April, Mei 2025 dan Januari 2026 masing-masing 8/64 (12,5%). DOGE menghasilkan $4,68 dari laba neto $16,73 (28,0%); Mei 2025 $9,32 dari $16,73 (55,7%), melampaui batas G-10 bulan 35% dengan definisi neto proyek. ETH hanya 1 trade, +$1,77; sampel tidak bermakna. Konsentrasi lengkap setiap simbol/bulan dan statistiknya di `research/results/universe.json`, baseline di `research/results/baseline.json`. Angka ini menggantikan hasil awal 65 trade karena replay ulang menerapkan pembatalan pending saat gate berubah dan batas usia listing, seperti pada varian 5m.
 
-Rekomendasi sementara: **belum layak validasi penuh atau trading**. Hasil VAL pernah terpapar riset sebelumnya dan pilihan universe memakai snapshot kontrak kini; tidak independen. Seluruh gate tetap NO-GO. Hash backtest yang ada tidak mencakup universe dan data: baseline dan universe menghasilkan hash parameter sama, sehingga direktori dan manifest di atas harus dipakai untuk membedakannya. Ledger per direktori juga belum menjamin hitungan DSR global. Opsi b–d belum diuji.
+Rekomendasi sementara: **belum layak validasi penuh atau trading**. Hasil VAL pernah terpapar riset sebelumnya dan pilihan universe memakai snapshot kontrak kini; tidak independen. Seluruh gate tetap NO-GO. Hash backtest yang ada tidak mencakup universe dan data: baseline dan universe menghasilkan hash parameter sama, sehingga direktori dan manifest di atas harus dipakai untuk membedakannya. Ledger per direktori juga belum menjamin hitungan DSR global. Opsi b diukur di bawah. Opsi c dan d tidak pernah ditulis di catatan tugas, jadi tidak dibuat.
 
-### Opsi b — entry 5m (persiapan)
+### Opsi b — entry 5m (replay selesai; tes workspace lulus)
 
-Opsi fetch publik `--only-5m` ditambahkan untuk mengambil candle yang kurang tanpa menimpa data 15m/1h/funding; uji `cargo test -p apex` lulus 7/7. Ini belum mengubah timeframe strategi atau membuktikan hasil backtest 5m.
+Opsi fetch publik `--only-5m` ditambahkan untuk mengambil candle yang kurang tanpa menimpa data 15m/1h/funding; uji `cargo test -p apex` lulus 7/7. Opsi fetch ini sendiri tidak mengubah timeframe strategi.
+
+Eksperimen `research_entry_5m = true` hanya berlaku untuk backtest S1/S3 dengan Reader; default tetap 15m. Entry, TTL dan konfirmasi OFCC memakai candle 5m yang sudah tutup; keputusan Reader hanya diperbarui setiap close 15m, sementara screener tetap 15m/1h. 24 jam volume memakai 288 candle 5m. Bar 5m yang hilang/tidak valid menyebabkan error, dan pasangan harus melewati 30 hari sejak listing; jika metadata tidak ada, bar pertama dipakai sebagai estimasi konservatif. Pending dibatalkan bila regime, sisi, universe, batas posisi, cooldown, stop harian, atau trend simbol pada waktu yang tersedia tidak lagi mengizinkan fill. Pengecekan yang sama juga diterapkan saat replay ulang 15m untuk perbandingan adil. Tes prefix/mutasi masa depan untuk S1/S3 dan tes 1h tertutup lulus; ini bukan bukti G-01 lengkap.
+
+| Run terpisah | Sinyal | Trade | IS | VAL | WR | PF | E[R] | E VAL | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S1 5m | 440 | 44 | 23 | 21 | 38,64% | 1,197 | +0,118 | −0,316 | $8,49 / 8,57R |
+| S3 5m | 5 | 3 | 2 | 1 | 66,67% | 3,677 | +0,921 | +1,879 | $1,00 / 1,00R |
+| Gabungan 5m | 445 | 46 | 24 | 22 | 41,30% | 1,335 | +0,195 | −0,216 | $6,66 / 6,69R |
+
+S1: SUI 9/44 trade (20,45%); April dan Mei 2025 masing-masing 6/44 (13,64%). ENA menyumbang $3,75 dari neto $5,29; Februari 2025 menyumbang $6,59 (lebih dari 100% neto karena bulan lain rugi). ETH terpisah: 5 trade, neto −$2,02, E −0,415R. S3 hanya satu trade VAL: angka positif tidak bermakna. Distribusi lengkap ada di `research/results/five_minute.json`. **5m tidak direkomendasikan untuk validasi penuh:** E VAL S1 dan gabungan negatif, dan semua sampel jauh di bawah G-02.
 
 ### Baseline untuk perbandingan (replay Reader, universe default, 2025-01-01–2026-05-01 eksklusif)
 
@@ -93,3 +103,5 @@ Opsi fetch publik `--only-5m` ditambahkan untuk mengambil candle yang kurang tan
 | Gabungan S1+S3 | 308 | 31 | 12 | 19 | 45,16% | 1,566 | +0,311 | +0,069 | $4,99 / 5,01R |
 
 Replay memakai biaya model dan saldo awal $60; IS berakhir 2025-07-01 dan VAL sesudahnya. Sinyal dan hasil per strategi dari run masing-masing, sedangkan gabungan berbagi slot dan saldo. S1: konsentrasi trade tertinggi DOGE 5/29 (17,2%), bulan November 2025 dan Januari 2026 masing-masing 4/29 (13,8%); laba neto DOGE $6,55 dari total $11,54, April 2025 $5,71 dari total $11,54. S3: masing-masing LINK, SUI, XRP 1/3; Februari 2026 2/3, total neto negatif. Distribusi lengkap simbol/bulan dapat dihitung ulang dengan `research/tc3_metrics.py` pada JSON replay. Sampel IS/VAL jauh di bawah G-02 dan VAL pernah dipakai riset sebelumnya; angka ini tidak membuktikan profit konsisten.
+
+`cargo test --workspace --offline` pada `codex/sample` lulus 2026-11-05: apex 7, backtest 21 (306,93 d), core 23, data 6, indicators 6, market_reader 18, oms 7, state_machine 20, screener 8, strategies 17 (81,97 d). Jumlah 133 lulus, 0 gagal. Doc-test setiap crate 0. Tidak ada order, holdout, push, atau merge. `research_entry_5m` tetap `false`. Kedua opsi tetap NO-GO.

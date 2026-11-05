@@ -1,6 +1,6 @@
 //! Closed-bar S1 order-flow confirmation. A watch is not an exchange order.
 use crate::{mirror_bar, Signal, StrategyId};
-use apex_core::types::{Bar, Side};
+use apex_core::types::{Bar, Side, Tf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -19,9 +19,16 @@ pub struct S1Watch {
     seen: u32,
     last_close_ms: i64,
     finished: bool,
+    timeframe: Tf,
 }
 impl S1Watch {
     pub fn new(signal: Signal) -> Option<Self> {
+        Self::new_with_tf(signal, Tf::M15)
+    }
+    pub fn new_with_tf(signal: Signal, timeframe: Tf) -> Option<Self> {
+        if !matches!(timeframe, Tf::M5 | Tf::M15) {
+            return None;
+        }
         if signal.strategy != StrategyId::S1Tfp
             || signal.kind != apex_core::sizing::EntryKind::LimitMaker
         {
@@ -57,6 +64,7 @@ impl S1Watch {
             seen: 0,
             last_close_ms,
             finished: false,
+            timeframe,
         })
     }
     /// Original validity window remaining after observed closed bars.
@@ -72,7 +80,7 @@ impl S1Watch {
         if close_ms <= self.last_close_ms {
             return Outcome::Waiting;
         }
-        let tf_ms = apex_core::types::Tf::M15.ms();
+        let tf_ms = self.timeframe.ms();
         if close_ms != self.last_close_ms + tf_ms
             || bar.open_time + tf_ms != close_ms
             || !bar.is_valid()
@@ -187,5 +195,26 @@ mod tests {
         let mut b = bar(0, 99., 103., 101., 60.);
         b.taker_buy_base = f64::NAN;
         assert_eq!(w.observe(&b, 900_000, 10.), Outcome::Rejected);
+    }
+
+    #[test]
+    fn five_minute_watch_requires_a_closed_five_minute_bar() {
+        let mut w = S1Watch::new_with_tf(sig(Side::Long), Tf::M5).unwrap();
+        let b = bar(0, 99., 103., 101., 60.);
+        assert_eq!(w.observe(&b, 0, 10.), Outcome::Waiting);
+        assert_eq!(w.observe(&b, 300_000, 10.), Outcome::Confirmed);
+        assert!(S1Watch::new_with_tf(sig(Side::Long), Tf::H1).is_none());
+    }
+
+    #[test]
+    fn five_minute_view_never_sees_unclosed_hour() {
+        let bars: Vec<_> = (0..13).map(|i| bar(i * Tf::M5.ms(), 99., 103., 101., 60.)).collect();
+        let hours = vec![bar(0, 99., 103., 101., 60.), bar(Tf::H1.ms(), 99., 103., 101., 60.)];
+        let series = crate::SymbolSeries::new_with_tf("ETHUSDT", &bars, &hours, Tf::M5);
+        assert_eq!(series.h1_idx_at(10), None);
+        assert_eq!(series.h1_idx_at(11), Some(0));
+        let view = crate::make_view(&series, &series.long, 10, apex_screener::SymState::TrendUp);
+        assert!(view.h1.is_empty());
+        assert_eq!(view.as_of, 11 * Tf::M5.ms());
     }
 }

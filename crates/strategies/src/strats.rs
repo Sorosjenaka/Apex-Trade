@@ -106,7 +106,8 @@ pub fn s2_lsr(v: &View, p: &StrategyParams) -> Option<RawSignal> {
 fn key_levels(v: &View) -> Vec<f64> {
     let t = v.t();
     let day = apex_core::time::day_start(v.m15[t].open_time);
-    let prev: Vec<&Bar> = v.m15.iter().rev().take(200).filter(|b| b.open_time >= day - 86_400_000 && b.open_time < day).collect();
+    let lookback = (200 * Tf::M15.ms() / v.entry_tf.ms()) as usize;
+    let prev: Vec<&Bar> = v.m15.iter().rev().take(lookback).filter(|b| b.open_time >= day - 86_400_000 && b.open_time < day).collect();
     let mut lv = Vec::new();
     if !prev.is_empty() {
         lv.push(prev.iter().map(|b| b.high).fold(f64::MIN, f64::max));
@@ -407,6 +408,27 @@ mod tests {
         let h2 = apex_indicators::aggregate(&m2, apex_core::types::Tf::M15, apex_core::types::Tf::H1);
         let mutated = SymbolSeries::new("TUSDT", &m2, &h2);
         assert_eq!(all_signals(&mutated, 3000, cut + 1), sigs_full);
+    }
+
+    #[test]
+    fn five_minute_s1_s3_ignore_future_bars() {
+        let bars = synth(4000, 42, 300_000, 0.0004);
+        let hours = apex_indicators::aggregate(&bars, Tf::M5, Tf::H1);
+        let cut = 3000;
+        let cutoff = bars[cut].open_time + Tf::M5.ms();
+        let prefix_hours: Vec<Bar> = hours.iter().copied().filter(|b| b.open_time + Tf::H1.ms() <= cutoff).collect();
+        let full = SymbolSeries::new_with_tf("TUSDT", &bars, &hours, Tf::M5);
+        let prefix = SymbolSeries::new_with_tf("TUSDT", &bars[..=cut], &prefix_hours, Tf::M5);
+        let signals = |s: &SymbolSeries| -> Vec<(usize, Signal)> {
+            (2000..=cut).flat_map(|i| [SymState::TrendUp, SymState::TrendDown].into_iter().flat_map(move |st| evaluate(s, i, st, &[StrategyId::S1Tfp, StrategyId::S3Sbr], &StrategyParams::default()).into_iter().map(move |sig| (i, sig)))).collect()
+        };
+        let expected = signals(&full);
+        assert!(!expected.is_empty(), "fixture must exercise at least one signal");
+        assert_eq!(signals(&prefix), expected);
+        let mut future = bars.clone();
+        for bar in future.iter_mut().skip(cut + 1) { bar.high *= 1.4; bar.low *= 0.7; bar.close *= 1.3; bar.volume *= 5.0; }
+        let changed_hours = apex_indicators::aggregate(&future, Tf::M5, Tf::H1);
+        assert_eq!(signals(&SymbolSeries::new_with_tf("TUSDT", &future, &changed_hours, Tf::M5)), expected);
     }
 
     #[test]

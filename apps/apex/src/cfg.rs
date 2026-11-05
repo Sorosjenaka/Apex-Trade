@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StrategiesFile {
+    /// Backtest-only experiment. Live executor remains on its 15m clock.
+    pub research_entry_5m: bool,
     /// urutan = prioritas
     pub enabled: Vec<String>,
     /// HYPOTHESIS | NO-GO | GO. Hanya GO yang boleh order testnet/live.

@@ -1,4 +1,5 @@
 # Urutan = prioritas bila dua sinyal bersamaan.
+research_entry_5m = false # hanya backtest S1/S3; regime tetap 15m/1h
 enabled = ["S1", "S2", "S3", "S4", "S5"]
 
 # Status validasi (Rules §4.3). HANYA "GO" yang boleh mengirim order testnet/live.

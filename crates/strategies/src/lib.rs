@@ -275,11 +275,17 @@ pub struct SymbolSeries {
     pub symbol: String,
     pub long: SideSeries,
     pub short: SideSeries,
+    entry_tf: Tf,
 }
 
 impl SymbolSeries {
     pub fn new(symbol: &str, m15: &[Bar], h1: &[Bar]) -> SymbolSeries {
-        SymbolSeries { symbol: symbol.to_string(), long: SideSeries::new(Side::Long, m15, h1), short: SideSeries::new(Side::Short, m15, h1) }
+        Self::new_with_tf(symbol, m15, h1, Tf::M15)
+    }
+    /// Research-only entry bars may be 5m; higher-timeframe bars must remain 1h.
+    pub fn new_with_tf(symbol: &str, entry: &[Bar], h1: &[Bar], entry_tf: Tf) -> SymbolSeries {
+        assert!(matches!(entry_tf, Tf::M5 | Tf::M15));
+        SymbolSeries { symbol: symbol.to_string(), long: SideSeries::new(Side::Long, entry, h1), short: SideSeries::new(Side::Short, entry, h1), entry_tf }
     }
     pub fn m15(&self) -> &[Bar] {
         &self.long.m15
@@ -289,7 +295,7 @@ impl SymbolSeries {
     }
     /// Indeks bar 1h terakhir yang sudah tutup saat bar 15m ke-t tutup.
     pub fn h1_idx_at(&self, t: usize) -> Option<usize> {
-        let close_t = self.long.m15[t].open_time + Tf::M15.ms();
+        let close_t = self.long.m15[t].open_time + self.entry_tf.ms();
         self.long.h1.partition_point(|b| b.open_time + Tf::H1.ms() <= close_t).checked_sub(1)
     }
 }
@@ -321,7 +327,7 @@ pub struct F1View<'a> {
     pub vol_sma20: &'a [f64],
 }
 
-/// Pandangan bar-tertutup pada bar 15m ke-t (dalam ruang sisi: long asli / short cermin).
+/// Pandangan bar entry tertutup (long asli / short cermin), dengan konteks 1h.
 pub struct View<'a> {
     pub symbol: &'a str,
     pub side: Side,
@@ -335,6 +341,7 @@ pub struct View<'a> {
     /// Screener state simbol searah sisi (TREND_UP untuk long, TREND_DOWN untuk short).
     pub trend_ok: bool,
     pub as_of: Ms,
+    pub entry_tf: Tf,
 }
 
 impl<'a> View<'a> {
@@ -396,7 +403,8 @@ pub fn make_view<'a>(sym: &'a SymbolSeries, s: &'a SideSeries, t: usize, state: 
         piv15_5: piv_cut(&s.piv15_5, t),
         piv1h_3: piv_cut(&s.piv1h_3, hn.saturating_sub(1)),
         trend_ok: state == want,
-        as_of: s.m15[t].open_time + Tf::M15.ms(),
+        as_of: s.m15[t].open_time + sym.entry_tf.ms(),
+        entry_tf: sym.entry_tf,
     }
 }
 
