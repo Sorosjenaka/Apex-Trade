@@ -120,7 +120,7 @@ pub fn backtest(cfg: &AllConfig, a: &BtArgs, per_strategy: bool) -> anyhow::Resu
         let ho = holdout_guard(c.start, c.end, a.unlock_holdout, &hash, &ledger)?;
         let t0 = std::time::Instant::now();
         let r = run_backtest(&mkt, &c)?;
-        append_ledger(&ledger, &hash, &c, ho, &r.metrics, "backtest");
+        append_ledger(&ledger, &hash, &c, ho, &r.metrics, "backtest")?;
         let tag: Vec<&str> = run.iter().map(|s| s.code()).collect();
         let tag = tag.join("+");
         println!("\n== Backtest {} | {} → {} | regime={:?}{} | {:.1}s", tag, fmt_utc(c.start), fmt_utc(c.end), c.regime_mode, if a.stress { " | STRESS" } else { "" }, t0.elapsed().as_secs_f64());
@@ -146,7 +146,7 @@ pub fn backtest(cfg: &AllConfig, a: &BtArgs, per_strategy: bool) -> anyhow::Resu
     Ok(())
 }
 
-pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: bool, m: &Metrics, kind: &str) {
+pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: bool, m: &Metrics, kind: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let line = serde_json::json!({
         "ts": apex_core::time::now_ms(),
@@ -163,9 +163,10 @@ pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: boo
         "chop_range": c.screener.chop_range,
         "chop_trend": c.screener.chop_trend,
     });
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(ledger) {
-        let _ = writeln!(f, "{line}");
-    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(ledger)?;
+    writeln!(f, "{line}")?;
+    f.sync_data()?;
+    Ok(())
 }
 
 /// Gate dengan status INCONCLUSIVE saat sampel kurang (Rules G-02: kurang -> INCONCLUSIVE).
@@ -176,10 +177,10 @@ fn gate_v(name: &str, ok: bool, sample_ok: bool, detail: String) -> bool {
     ok && sample_ok
 }
 
-/// Trade dengan exit_ms di [from, to) -- memisahkan segmen IS/VAL (Rules G-02..G-04, G-07).
-/// Atribusi berdasar waktu exit: PnL terealisasi di segmen saat trade ditutup.
+/// Independent segment: signal, entry and real exit must all be within [from, to).
+/// EndOfData is a mark-to-market, not a completed trade.
 fn seg_trades(trades: &[Trade], from: i64, to: i64) -> Vec<Trade> {
-    trades.iter().filter(|t| t.exit_ms >= from && t.exit_ms < to).cloned().collect()
+    trades.iter().filter(|t| t.signal_ms >= from && t.signal_ms <= t.entry_ms && t.entry_ms <= t.exit_ms && t.entry_ms >= from && t.exit_ms >= from && t.exit_ms < to && t.exit_kind != apex_core::risk::ExitKind::EndOfData).cloned().collect()
 }
 
 fn fnum(x: f64) -> String {
@@ -259,6 +260,8 @@ fn exec(mkt: &MarketInput, c: &BacktestConfig, ledger: &Path, kind: &str, sessio
     let t0 = std::time::Instant::now();
     eprintln!("  … {kind} {} → {}", fmt_utc(c.start), fmt_utc(c.end));
     let r = run_backtest(mkt, c)?;
+    // Persist before exposing results so an unrecorded trial cannot inform selection.
+    append_ledger(ledger, &hash, c, ho, &r.metrics, kind)?;
     eprintln!(
         "    {:.1}s trades={} E={:+.3}R PF={} chop={:.1}% nontrade={:.1}%",
         t0.elapsed().as_secs_f64(),
@@ -268,7 +271,6 @@ fn exec(mkt: &MarketInput, c: &BacktestConfig, ledger: &Path, kind: &str, sessio
         chop_block_rate(&r.regime_bars) * 100.0,
         non_trade_rate(&r.regime_bars) * 100.0
     );
-    append_ledger(ledger, &hash, c, ho, &r.metrics, kind);
     note_session(session, c, &r);
     Ok((r, ho))
 }
@@ -434,9 +436,11 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         for id in ids {
             let c = make_cfg(cfg, &a, vec![id])?;
             let (r, ho) = exec(&mkt, &c, &ledger_path, "holdout", &mut session, true)?;
-            let m = &r.metrics;
+            let holdout_start = parse_ymd(apex_backtest::HOLDOUT_START).ok_or_else(|| anyhow::anyhow!("invalid holdout start"))?;
+            let holdout_end = parse_ymd(apex_backtest::HOLDOUT_END_EXCL).ok_or_else(|| anyhow::anyhow!("invalid holdout end"))?;
+            let m = Metrics::from_trades(&seg_trades(&r.trades, holdout_start, holdout_end), cfg.risk.start_balance_usd);
             println!("\n== G-11 {} | {} → {}", id.code(), fmt_utc(c.start), fmt_utc(c.end));
-            print_metrics("holdout", m);
+            print_metrics("holdout", &m);
             let ok = ho && m.trades >= 40 && g11_pass(m.expectancy_r, m.profit_factor);
             gate_v("G-11 holdout trades≥40 & E>0 & PF≥1.10 (Rules G-02: HOLDOUT≥40)", ok, m.trades >= 40, format!("{} trade (min 40), {:+.3}R / {}", m.trades, m.expectancy_r, pf_print(m.profit_factor)));
             println!("  ==> {} : NO-GO{}", id.code(), if ok { " (G-11 lolos angka; status tetap NO-GO sampai review user)" } else { "" });
@@ -607,11 +611,13 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         let is_t = seg_trades(&r.trades, i64::MIN, oos_from);
         let val_t = seg_trades(&r.trades, oos_from, i64::MAX);
         let m_val = Metrics::from_trades(&val_t, cfg.risk.start_balance_usd);
+        let stress_val_t = seg_trades(&rs.trades, oos_from, i64::MAX);
+        let m_stress_val = Metrics::from_trades(&stress_val_t, cfg.risk.start_balance_usd);
         let (n_is, n_val) = (is_t.len(), val_t.len());
         let g02_ok = n_is >= 100 && n_val >= 60;
         let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect(); // G-08 (DSR): jendela penuh, Rules tak spesifikasi segmen
         let rvec_val: Vec<f64> = val_t.iter().map(|t| t.r).collect(); // G-07: bootstrap urutan trade VAL
-        let per_year = trades_per_year(rvec_val.len(), (c.end - oos_from).max(1));
+        let per_year = trades_per_year(rvec_val.len(), c.end.saturating_sub(c.start.max(oos_from)).max(1));
         let mc = monte_carlo(&rvec_val, per_year, 10_000, cfg.risk.start_balance_usd, cfg.risk.equity_floor_usd, 42);
         let prior = priors.get(id.code()).copied().unwrap_or(0);
         let session_n = session.runs.get(id.code()).copied().unwrap_or(0);
@@ -634,13 +640,16 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         println!("\n== Validate {} | {} → {}", id.code(), fmt_utc(c.start), fmt_utc(c.end));
         print_metrics("base", m);
         print_metrics("VAL (segmen Rules)", &m_val);
-        print_metrics("stress", &rs.metrics);
-        let mut all = true;
+        print_metrics("stress full", &rs.metrics);
+        print_metrics("stress VAL", &m_stress_val);
+        // Checksum and independent prefix replay are not established by this command.
+        let mut all = gate_v("G-01 data, checksum and prefix replay", r.data_gaps == 0, false, format!("{} data gaps; checksum/prefix not verified", r.data_gaps));
         all &= gate_v("G-02 sampel IS≥100 & VAL≥60 (Rules G-02; kurang → INCONCLUSIVE)", g02_ok, g02_ok, format!("IS={} (min 100), VAL={} (min 60), total={}", n_is, n_val, m.trades));
         all &= gate_v("G-03 expectancy VAL ≥ +0.10R", g03_pass(m_val.expectancy_r), g02_ok, format!("{:+.3}R (VAL {} trade)", m_val.expectancy_r, n_val));
         all &= gate_v("G-04 PF VAL ≥ 1.25", g04_pass(m_val.profit_factor), g02_ok, format!("{} (VAL)", pf_print(m_val.profit_factor)));
-        all &= gate_v("G-05 stress fee×2 slip+0.05% funding×2, E≥0.03R & PF≥1.10 (jendela penuh)", g05_pass(rs.metrics.expectancy_r, rs.metrics.profit_factor), g02_ok, format!("{:+.3}R / {}", rs.metrics.expectancy_r, pf_print(rs.metrics.profit_factor)));
-        all &= gate_v("G-06 WF anchored 6 fold (re-run OOS, param beku) ≥4/6 >0, terburuk ≥ −0.15R", wf.pass, g02_ok, format!("{}/6, terburuk {:+.3}R, folds={}", wf.positive, wf.worst, fold_e.iter().map(|e| format!("{e:+.3}")).collect::<Vec<_>>().join(",")));
+        all &= gate_v("G-05 stress VAL: fee 2x, slip +0.05%, funding 2x", g05_pass(m_stress_val.expectancy_r, m_stress_val.profit_factor), g02_ok && m_stress_val.trades >= 60, format!("VAL {} trades, {:+.3}R / {}", m_stress_val.trades, m_stress_val.expectancy_r, pf_print(m_stress_val.profit_factor)));
+        // Fixed-parameter windows cannot pass the per-fold refit required by G-06.
+        all &= gate_v("G-06 WF anchored, per-fold refit", wf.pass, false, format!("no refit; fixed windows {}/6, worst {:+.3}R", wf.positive, wf.worst));
         all &= gate_v("G-07 MC 10000 path bootstrap trade VAL, ukuran 1 tahun, p95 DD ≤ 15R & P(<$40) ≤ 5%", mc.paths == 10_000 && g07_pass(mc.p95_max_dd_r, mc.p_below_floor), g02_ok, format!("paths={} n_year={} (VAL {} trade) p95DD={:.1}R P(<40)={:.1}%", mc.paths, per_year, n_val, mc.p95_max_dd_r, mc.p_below_floor * 100.0));
         all &= gate_v("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy", g08_pass(d), g02_ok, format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
         all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, g02_ok, format!("tetangga {}/{} positif ({:.0}%), median {:+.3} vs 50%×E_VAL {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
@@ -653,7 +662,6 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             println!("  [LOCKED] G-11 holdout 2026-05-01..2026-10-31 tidak dijalankan. Syarat bila dibuka sekali: E>0 dan PF≥1.10. Bukan PASS.");
             false
         };
-        println!("  G-01: celah data backtest={}. Checksum & prefix-test tidak dihitung di perintah ini.", r.data_gaps);
         let suffix = if !g02_ok {
             " (G-02 INCONCLUSIVE: sampel IS/VAL kurang — hasil gate lain tidak sah sebagai validasi aturan)"
         } else if all && !g11_ok {
@@ -664,7 +672,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             ""
         };
         println!("  ==> {} : NO-GO{}", id.code(), suffix);
-        gate_rows.push(serde_json::json!({
+        let mut gate_row = serde_json::json!({
             "strategy": id.code(),
             "trades": m.trades,
             "is_trades": n_is,
@@ -677,12 +685,12 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "max_dd_r": fnum(m.max_dd_r),
             "max_dd_usd": fnum(m.max_dd_usd),
             "win_rate": fnum(m.win_rate),
-            "stress_e": fnum(rs.metrics.expectancy_r),
-            "stress_pf": fnum(rs.metrics.profit_factor),
-            "stress_trades": rs.metrics.trades,
+            "stress_e": fnum(m_stress_val.expectancy_r),
+            "stress_pf": fnum(m_stress_val.profit_factor),
+            "stress_trades": m_stress_val.trades,
             "wf_positive": wf.positive,
             "wf_worst": fnum(wf.worst),
-            "wf_pass": wf.pass,
+            "wf_pass": false,
             "folds": fold_meta,
             "mc_paths": mc.paths,
             "mc_per_year": per_year,
@@ -693,7 +701,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "prior_trials": prior,
             "session_trials": session_n,
             "var_sr": fnum(var_sr),
-            "g09_pass": plateau.pass,
+            "g09_pass": plateau.pass && g02_ok,
             "g09_positive_frac": fnum(plateau.positive_frac),
             "g09_median": fnum(plateau.median),
             "g09_selected_e": fnum(plateau.selected),
@@ -703,7 +711,14 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "non_trade": fnum(non_trade_rate(&r.regime_bars)),
             "screen_block": fnum((1.0 - r.screener_trend_share).clamp(0.0, 1.0)),
             "data_gaps": r.data_gaps,
-        }));
+        });
+        gate_row["stress_full_e"] = serde_json::json!(fnum(rs.metrics.expectancy_r));
+        gate_row["stress_full_pf"] = serde_json::json!(fnum(rs.metrics.profit_factor));
+        gate_row["g01_verified"] = serde_json::json!(false);
+        gate_row["g06_refit_available"] = serde_json::json!(false);
+        gate_row["wf_fixed_windows_pass"] = serde_json::json!(wf.pass);
+        gate_row["g09_raw_pass"] = serde_json::json!(plateau.pass);
+        gate_rows.push(gate_row);
     }
     summary["gates"] = serde_json::Value::Array(gate_rows);
     let path = a.out.join("validation_summary.json");
@@ -715,6 +730,12 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ledger_write_failure_is_not_silenced() {
+        let path = std::env::temp_dir(); // directory cannot be opened as a ledger file
+        assert!(append_ledger(&path, "test", &BacktestConfig::default(), false, &Metrics::default(), "test").is_err());
+    }
 
     #[test]
     fn stress_matches_g05() {
@@ -735,8 +756,8 @@ mod tests {
             symbol: "XUSDT".into(),
             strategy: "S1_TFP".into(),
             side: Side::Long,
-            signal_ms: 0,
-            entry_ms: 0,
+            signal_ms: exit_ms - 2,
+            entry_ms: exit_ms - 1,
             exit_ms,
             entry: 100.0,
             sl: 99.0,
@@ -756,6 +777,26 @@ mod tests {
         let tr = vec![mk(100), mk(200), mk(300)];
         assert_eq!(seg_trades(&tr, i64::MIN, 250).len(), 2);
         assert_eq!(seg_trades(&tr, 250, i64::MAX).len(), 1);
+        let mut forced = mk(300);
+        forced.exit_kind = ExitKind::EndOfData;
+        assert!(seg_trades(&[forced], 250, i64::MAX).is_empty());
+        let mut cross_boundary = mk(300);
+        cross_boundary.signal_ms = 240;
+        cross_boundary.entry_ms = 260;
+        assert!(seg_trades(&[cross_boundary], 250, i64::MAX).is_empty());
+        let mut invalid_order = mk(300);
+        invalid_order.signal_ms = 301;
+        assert!(seg_trades(&[invalid_order], 250, i64::MAX).is_empty());
+        let mut val_loss = mk(300);
+        val_loss.pnl_net = -1.0;
+        val_loss.r = -1.0;
+        val_loss.exit_kind = ExitKind::StopLoss;
+        let mixed = vec![mk(100), mk(200), val_loss];
+        let full = Metrics::from_trades(&mixed, 60.0);
+        let val = Metrics::from_trades(&seg_trades(&mixed, 250, i64::MAX), 60.0);
+        assert!(full.expectancy_r > 0.0);
+        assert!(val.expectancy_r < 0.0);
+        assert!(!g05_pass(val.expectancy_r, val.profit_factor));
     }
 
     #[test]
@@ -764,5 +805,9 @@ mod tests {
         assert!(!gate_v("x", true, false, "d".into()));
         assert!(gate_v("x", true, true, "d".into()));
         assert!(!gate_v("x", false, true, "d".into()));
+        // Even six profitable fixed-parameter windows cannot satisfy G-06 without refit.
+        let fixed = walk_forward_gate(&[0.2; 6]);
+        assert!(fixed.pass);
+        assert!(!gate_v("G-06 without refit", fixed.pass, false, "no refit".into()));
     }
 }
