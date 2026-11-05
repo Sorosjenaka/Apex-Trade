@@ -57,3 +57,13 @@ Skip breakdown: SKIP_REGIME 196, SKIP_MAX_POSITIONS 32, EXPIRED 23, OFCC_REJECTE
 
 - **T-C2: DONE** — cancel_beyond aktif di live executor + 26 test OMS lulus.
 - **T-C1: DONE dengan temuan** — 4 port selesai (OFCC f1275a9, magnet cc8715c, kNN ca6ee2b, MR-09 shadow 0506dc7/8b3650f/0f09d6a); item "tambah sampel trade" terukur dan terdokumentasi di atas: tidak dapat dinaikkan tanpa knob regime T-H2 (di luar risk rule), yang butuh merge T-G1.
+
+## 10. T-C3 — perluasan sampel (sedang dikerjakan)
+
+Setelah izin eksplisit pengguna, master lokal di-fast-forward dari `07a768a` ke `221c94c`; branch `codex/sample` dibuat dari master. Lihat `REPORT_MERGE.md`. Draft Hermes yang belum di-commit tidak diubah atau dimasukkan. Semua strategi tetap NO-GO.
+
+Aturan IS/VAL proyek (`Rules.md` §4.3) menetapkan VAL mulai 2025-07-01 UTC. Validator sebelumnya salah menggunakan split sweep eksploratif 2026-01-01; boundary pencacahan diperbaiki. Sweep yang menggunakan periode VAL untuk memilih kandidat tetap tidak independen: G-09 ditandai INCONCLUSIVE dan nilai sweep hanya diagnostik. Holdout tetap terkunci.
+
+### Opsi a — universe (persiapan, belum ada hasil backtest)
+
+Ranking memakai jumlah quote volume harian pada Desember 2024, sebelum periode uji. Metadata exchange dan allowlist diambil dari snapshot saat ini; hasil rentan survivorship bias dan bukan universe point-in-time lengkap. Dari 239 kontrak kandidat, 239 memiliki 31 bar harian lengkap dan 40 teratas dipilih. BTC hanya konteks; ETH termasuk universe. Konfigurasi riset terpisah dengan aturan risk dan volume gate tetap; fetch data publik sedang berjalan. Tidak ada angka performa atau rekomendasi kelayakan sebelum replay selesai. Opsi b–d belum diuji.

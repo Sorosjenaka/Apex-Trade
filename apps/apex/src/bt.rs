@@ -203,6 +203,8 @@ const FIT_FROM: &str = "2025-01-01";
 const FIT_TO: &str = "2026-01-01";
 const OOS_FROM: &str = "2026-01-01";
 const OOS_TO: &str = "2026-05-01";
+/// Rules §4.3 validation boundary; distinct from the exploratory sweep split.
+const VALIDATION_FROM: &str = "2025-07-01";
 const TREND_GRID: [f64; 7] = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0];
 const CHOP_RANGE_GRID: [f64; 7] = [45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0];
 /// Knob kedua klausa CHOP regime: ADX 1h (baseline 18).
@@ -606,18 +608,18 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         }
         let wf = walk_forward_gate(&fold_e);
         let m = &r.metrics;
-        // Segmen IS/VAL (Rules G-02..G-04, G-07): IS = exit sebelum OOS_FROM, VAL = exit mulai OOS_FROM.
-        let oos_from = parse_ymd(OOS_FROM).unwrap_or(c.end);
-        let is_t = seg_trades(&r.trades, i64::MIN, oos_from);
-        let val_t = seg_trades(&r.trades, oos_from, i64::MAX);
+        // Rules §4.3, not the separately defined exploratory sweep split.
+        let val_from = parse_ymd(VALIDATION_FROM).ok_or_else(|| anyhow::anyhow!("invalid validation boundary"))?;
+        let is_t = seg_trades(&r.trades, i64::MIN, val_from);
+        let val_t = seg_trades(&r.trades, val_from, i64::MAX);
         let m_val = Metrics::from_trades(&val_t, cfg.risk.start_balance_usd);
-        let stress_val_t = seg_trades(&rs.trades, oos_from, i64::MAX);
+        let stress_val_t = seg_trades(&rs.trades, val_from, i64::MAX);
         let m_stress_val = Metrics::from_trades(&stress_val_t, cfg.risk.start_balance_usd);
         let (n_is, n_val) = (is_t.len(), val_t.len());
         let g02_ok = n_is >= 100 && n_val >= 60;
         let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect(); // G-08 (DSR): jendela penuh, Rules tak spesifikasi segmen
         let rvec_val: Vec<f64> = val_t.iter().map(|t| t.r).collect(); // G-07: bootstrap urutan trade VAL
-        let per_year = trades_per_year(rvec_val.len(), c.end.saturating_sub(c.start.max(oos_from)).max(1));
+        let per_year = trades_per_year(rvec_val.len(), c.end.saturating_sub(c.start.max(val_from)).max(1));
         let mc = monte_carlo(&rvec_val, per_year, 10_000, cfg.risk.start_balance_usd, cfg.risk.equity_floor_usd, 42);
         let prior = priors.get(id.code()).copied().unwrap_or(0);
         let session_n = session.runs.get(id.code()).copied().unwrap_or(0);
@@ -652,7 +654,8 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         all &= gate_v("G-06 WF anchored, per-fold refit", wf.pass, false, format!("no refit; fixed windows {}/6, worst {:+.3}R", wf.positive, wf.worst));
         all &= gate_v("G-07 MC 10000 path bootstrap trade VAL, ukuran 1 tahun, p95 DD ≤ 15R & P(<$40) ≤ 5%", mc.paths == 10_000 && g07_pass(mc.p95_max_dd_r, mc.p_below_floor), g02_ok, format!("paths={} n_year={} (VAL {} trade) p95DD={:.1}R P(<40)={:.1}%", mc.paths, per_year, n_val, mc.p95_max_dd_r, mc.p_below_floor * 100.0));
         all &= gate_v("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy", g08_pass(d), g02_ok, format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
-        all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, g02_ok, format!("tetangga {}/{} positif ({:.0}%), median {:+.3} vs 50%×E_VAL {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
+        // The exploratory choice uses OOS results; it is not an independently selected VAL plateau.
+        all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, false, format!("exploratory sweep uses OOS for selection; {}/{} positif ({:.0}%), median {:+.3} vs 50%×E {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
         all &= gate_v("G-10 konsentrasi simbol ≤40% & bulan ≤35%", g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share), g02_ok, format!("simbol {:.0}% / bulan {:.0}% dari net", m.max_symbol_profit_share * 100.0, m.max_month_profit_share * 100.0));
         let g11_ok = if ho {
             let ok = m.trades >= 40 && g11_pass(m.expectancy_r, m.profit_factor);
@@ -701,7 +704,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "prior_trials": prior,
             "session_trials": session_n,
             "var_sr": fnum(var_sr),
-            "g09_pass": plateau.pass && g02_ok,
+            "g09_pass": false,
             "g09_positive_frac": fnum(plateau.positive_frac),
             "g09_median": fnum(plateau.median),
             "g09_selected_e": fnum(plateau.selected),
@@ -716,6 +719,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         gate_row["stress_full_pf"] = serde_json::json!(fnum(rs.metrics.profit_factor));
         gate_row["g01_verified"] = serde_json::json!(false);
         gate_row["g06_refit_available"] = serde_json::json!(false);
+        gate_row["g09_sweep_diagnostic_pass"] = serde_json::json!(plateau.pass);
         gate_row["wf_fixed_windows_pass"] = serde_json::json!(wf.pass);
         gate_row["g09_raw_pass"] = serde_json::json!(plateau.pass);
         gate_rows.push(gate_row);
@@ -730,6 +734,12 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validation_boundary_matches_rules() {
+        assert_eq!(parse_ymd(VALIDATION_FROM), parse_ymd("2025-07-01"));
+        assert_ne!(VALIDATION_FROM, OOS_FROM);
+    }
 
     #[test]
     fn ledger_write_failure_is_not_silenced() {
