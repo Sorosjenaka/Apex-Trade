@@ -1,5 +1,5 @@
 # Urutan = prioritas bila dua sinyal bersamaan.
-research_entry_5m = false # hanya backtest S1/S3; regime tetap 15m/1h
+research_entry_5m = true # hanya backtest S1/S3; regime tetap 15m/1h
 enabled = ["S1"]
 
 # Status validasi (Rules §4.3). HANYA "GO" yang boleh mengirim order testnet/live.
