@@ -375,6 +375,7 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
     let mut last_close: Ms = 0;
     let mut last_meta = now;
     let mut last_reconcile = now;
+    let mut siklus: u64 = 0;
     loop {
         let now = now_ms();
         if paper {
@@ -405,7 +406,8 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
         let cur_close = now - now.rem_euclid(Tf::M15.ms());
         if cur_close > last_close && now - cur_close >= 3_000 {
             last_close = cur_close;
-            if let Err(e) = on_bar_close(cfg, &mut mgr, pc, &mut meta, &mut vg, &ids, &mut watches, now).await {
+            siklus += 1;
+            if let Err(e) = on_bar_close(cfg, &mut mgr, pc, &mut meta, &mut vg, &ids, &mut watches, now, siklus).await {
                 eprintln!("{} siklus 15m gagal: {e}", fmt_utc(now));
             }
             if once {
@@ -425,7 +427,167 @@ async fn mark_prices(pc: &PublicClient) -> anyhow::Result<BTreeMap<String, f64>>
     Ok(v.as_array().into_iter().flatten().map(|p| (p["symbol"].as_str().unwrap_or("").to_string(), num(&p["markPrice"]))).collect())
 }
 
-async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut OrderManager<E>, pc: &PublicClient, meta: &mut LiveMeta, vg: &mut VolumeGateTracker, ids: &[apex_strategies::StrategyId], watches: &mut BTreeMap<String, apex_strategies::ofcc_watch::S1Watch>, now: Ms) -> anyhow::Result<()> {
+fn build_s1_trace_json(
+    now: Ms,
+    sym: &str,
+    siklus: u64,
+    series: &SymbolSeries,
+    t: usize,
+    state: SymState,
+    dec_long_ok: bool,
+    dec_short_ok: bool,
+    included: bool,
+    fails: &[&str],
+    f: &apex_core::SymbolFilters,
+    cfg: &AllConfig,
+    s1_cand_side: Option<apex_core::types::Side>,
+    s1_cand_entry: Option<f64>,
+    s1_cand_sl: Option<f64>,
+    s1_sized: Option<(f64, f64)>,
+    ofcc_trace: Option<(apex_strategies::ofcc_watch::Outcome, u32, u32, apex_core::types::Side)>,
+    s1_stop: Option<&str>,
+) -> (Value, String) {
+    let trace_side = s1_cand_side
+        .or_else(|| ofcc_trace.map(|x| x.3))
+        .unwrap_or_else(|| match state {
+            SymState::TrendDown => apex_core::types::Side::Short,
+            SymState::TrendUp => apex_core::types::Side::Long,
+            _ => {
+                if !dec_long_ok && dec_short_ok {
+                    apex_core::types::Side::Short
+                } else {
+                    apex_core::types::Side::Long
+                }
+            }
+        });
+    let side_series = match trace_side {
+        apex_core::types::Side::Long => &series.long,
+        apex_core::types::Side::Short => &series.short,
+    };
+    let view = apex_strategies::make_view(series, side_series, t, state);
+    let session_ok = apex_strategies::session_ok(view.as_of, &cfg.strategies.params.s1_session);
+    let session_hour_utc = apex_strategies::session_hour_utc(view.as_of);
+    let tr = apex_strategies::trace_s1(&view, &cfg.strategies.params);
+
+    let sl_val = s1_cand_sl.or(tr.sl);
+    let sl_pct_val = match (s1_cand_entry, s1_cand_sl) {
+        (Some(e), Some(s)) if e > 0.0 && e.is_finite() && s.is_finite() => Some((e - s).abs() / e),
+        _ => tr.sl_pct,
+    };
+
+    let (ofcc_outcome, ofcc_seen, ofcc_remaining_bars) = match ofcc_trace {
+        Some((out, seen, rem, _)) => (out.as_str(), seen, rem),
+        None => ("none", 0, 0),
+    };
+
+    let min_qty = apex_core::num::to_f64(f.sizing_min_qty());
+    let min_notional = apex_core::num::to_f64(f.min_notional);
+    let (sizing_qty, notional) = if let Some((q, n)) = s1_sized {
+        (Some(q), Some(n))
+    } else if let (Some(e_raw), Some(s_raw)) = (s1_cand_entry.or(tr.entry_est), sl_val) {
+        let entry_d = f.round_entry(trace_side, to_dec(e_raw));
+        let sl_d = f.round_sl(trace_side, to_dec(s_raw));
+        let fee_in = to_dec(cfg.risk.fee_maker);
+        let fee_out = to_dec(cfg.risk.fee_taker);
+        let slip = to_dec(cfg.risk.slip_sl);
+        let sgn = match trace_side {
+            apex_core::types::Side::Long => rust_decimal::Decimal::ONE,
+            apex_core::types::Side::Short => -rust_decimal::Decimal::ONE,
+        };
+        let stop_fill = sl_d * (rust_decimal::Decimal::ONE - sgn * slip);
+        let loss_unit = sgn * (entry_d - stop_fill) + entry_d * fee_in + stop_fill * fee_out;
+        if entry_d > rust_decimal::Decimal::ZERO && loss_unit > rust_decimal::Decimal::ZERO {
+            let q = f.floor_qty(to_dec(cfg.risk.risk_usd) / loss_unit);
+            let n = q * entry_d;
+            (Some(apex_core::num::to_f64(q)), Some(apex_core::num::to_f64(n)))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let stop_at: &str = if let Some(s) = s1_stop {
+        s
+    } else if let Some((out, _, _, _)) = ofcc_trace {
+        match out {
+            apex_strategies::ofcc_watch::Outcome::Waiting => "ofcc_waiting",
+            apex_strategies::ofcc_watch::Outcome::Confirmed => "ofcc_confirmed_expired",
+            apex_strategies::ofcc_watch::Outcome::Rejected => "ofcc_rejected",
+            apex_strategies::ofcc_watch::Outcome::Expired => "ofcc_expired",
+        }
+    } else if !included {
+        "volume_gate"
+    } else if let Some(fail) = tr.first_fail {
+        fail
+    } else {
+        "signal"
+    };
+
+    let payload = serde_json::json!({
+        "ts": now,
+        "symbol": sym,
+        "siklus": siklus,
+        "session_ok": session_ok,
+        "session_hour_utc": session_hour_utc,
+        "trend_ok": tr.trend_ok,
+        "trend_4h_ok": tr.trend_4h_ok,
+        "volume_gate_ok": included,
+        "volume_gate_fails": fails,
+        "atr": tr.atr,
+        "srv": tr.srv,
+        "atr_pctile": tr.atr_pctile,
+        "fvg_gap_atr": tr.fvg_gap_atr,
+        "body_frac": tr.body_frac,
+        "mid_delta": tr.mid_delta,
+        "sell_push": tr.sell_push,
+        "delta": tr.delta,
+        "p90_absdelta": tr.p90_absdelta,
+        "close_pos": tr.close_pos,
+        "pivot_price": tr.pivot_price,
+        "sl": sl_val,
+        "sl_pct": sl_pct_val,
+        "ofcc_outcome": ofcc_outcome,
+        "ofcc_seen": ofcc_seen,
+        "ofcc_remaining_bars": ofcc_remaining_bars,
+        "sizing_qty": sizing_qty,
+        "min_qty": min_qty,
+        "min_notional": min_notional,
+        "notional": notional,
+        "stop_at": stop_at,
+    });
+
+    let summary = format!(
+        "  S1_TRACE {} siklus={} symbol={} stop_at={} sess={}({}h) trend={} 4h={} vg={} atr={:.4} srv={:.3} pct={:.1} fvg={:.3} body={:.2} mdelta={:.1} spush={} sl={:.2}({:.2}%) ofcc={}({}/{}) qty={:.4} not=${:.2}",
+        fmt_utc(now),
+        siklus,
+        sym,
+        stop_at,
+        session_ok,
+        session_hour_utc,
+        tr.trend_ok,
+        tr.trend_4h_ok,
+        included,
+        tr.atr.unwrap_or(f64::NAN),
+        tr.srv.unwrap_or(f64::NAN),
+        tr.atr_pctile.unwrap_or(f64::NAN),
+        tr.fvg_gap_atr.unwrap_or(f64::NAN),
+        tr.body_frac.unwrap_or(f64::NAN),
+        tr.mid_delta.unwrap_or(f64::NAN),
+        tr.sell_push,
+        sl_val.unwrap_or(f64::NAN),
+        sl_pct_val.map(|x| x * 100.0).unwrap_or(f64::NAN),
+        ofcc_outcome,
+        ofcc_seen,
+        ofcc_remaining_bars,
+        sizing_qty.unwrap_or(f64::NAN),
+        notional.unwrap_or(f64::NAN),
+    );
+
+    (payload, summary)
+}
+
+async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut OrderManager<E>, pc: &PublicClient, meta: &mut LiveMeta, vg: &mut VolumeGateTracker, ids: &[apex_strategies::StrategyId], watches: &mut BTreeMap<String, apex_strategies::ofcc_watch::S1Watch>, now: Ms, siklus: u64) -> anyhow::Result<()> {
     let universe = cfg.universe();
     let snap = snapshot(pc, &universe, now).await?;
     let Some(dec) = decide(&snap) else { anyhow::bail!("regime: data kurang") };
@@ -460,10 +622,12 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
         let states = screener_states(h1, m15, &cfg.screener.regime);
         let state = series.h1_idx_at(t).and_then(|h| states.get(h).copied()).unwrap_or(SymState::Blocked);
         let mut candidates: Vec<_> = evaluate(&series, t, state, ids, &cfg.strategies.params).into_iter().map(|s| (s, false)).collect();
+        let mut ofcc_trace: Option<(apex_strategies::ofcc_watch::Outcome, u32, u32, apex_core::types::Side)> = None;
         if let Some(w) = watches.get_mut(sym) {
             use apex_strategies::ofcc_watch::Outcome;
             let feature = if w.signal.side == apex_core::types::Side::Long { &series.long.f15 } else { &series.short.f15 };
             let outcome = w.observe(&m15[t], m15[t].open_time + Tf::M15.ms(), feature.p90_absdelta[t]);
+            ofcc_trace = Some((outcome, w.seen(), w.remaining_bars(), w.signal.side));
             match outcome {
                 Outcome::Waiting => {},
                 Outcome::Confirmed => {
@@ -476,13 +640,26 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
                 Outcome::Rejected | Outcome::Expired => { watches.remove(sym); }
             }
         }
+        let mut s1_cand_side = None;
+        let mut s1_cand_entry = None;
+        let mut s1_cand_sl = None;
+        let mut s1_sized = None;
+        let mut s1_stop: Option<&'static str> = None;
         for (sig, ofcc_confirmed) in candidates {
+            let is_s1 = sig.strategy == apex_strategies::StrategyId::S1Tfp;
+            if is_s1 {
+                s1_cand_side = Some(sig.side);
+                s1_cand_entry = Some(sig.entry);
+                s1_cand_sl = Some(sig.sl);
+            }
             let skip = |r: &str| mgr.audit.log(now, "SKIP", serde_json::json!({"symbol": sym, "strategy": sig.strategy.code(), "reason": r}));
             if !included {
+                if is_s1 { s1_stop = Some(SkipReason::VolumeGate.code()); }
                 skip(SkipReason::VolumeGate.code());
                 continue;
             }
             if mgr.mode != ExecMode::Paper && !cfg.is_go(sig.strategy) {
+                if is_s1 { s1_stop = Some(SkipReason::StrategyNotGo.code()); }
                 skip(SkipReason::StrategyNotGo.code());
                 continue;
             }
@@ -523,20 +700,39 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind: sig.kind, filters: &f, risk: &cfg.risk };
             match mgr.book.risk.evaluate_entry(&ctx, &inp, &cfg.risk) {
                 Ok(sz) => {
+                    if is_s1 {
+                        s1_sized = Some((apex_core::num::to_f64(sz.qty), apex_core::num::to_f64(sz.notional)));
+                    }
                     if sig.strategy == apex_strategies::StrategyId::S1Tfp && !ofcc_confirmed {
                         if let Some(w) = apex_strategies::ofcc_watch::S1Watch::new(sig.clone()) {
+                            ofcc_trace = Some((apex_strategies::ofcc_watch::Outcome::Waiting, w.seen(), w.remaining_bars(), sig.side));
+                            s1_stop = Some("ofcc_waiting");
                             watches.insert(sym.clone(), w);
-                        } else { skip("OFCC_INVALID_SETUP"); }
+                        } else {
+                            s1_stop = Some("OFCC_INVALID_SETUP");
+                            skip("OFCC_INVALID_SETUP");
+                        }
                         continue;
                     }
                     if ofcc_confirmed {
                         let crossed = if sig.side == apex_core::types::Side::Long { to_dec(m15[t].close) <= sz.entry } else { to_dec(m15[t].close) >= sz.entry };
-                        if crossed { skip("OFCC_POST_ONLY_CROSS"); continue; }
+                        if crossed {
+                            if is_s1 { s1_stop = Some("OFCC_POST_ONLY_CROSS"); }
+                            skip("OFCC_POST_ONLY_CROSS");
+                            continue;
+                        }
                     }
                     let mut ttl_ms = sig.ttl_bars as i64 * Tf::M15.ms();
                     if ofcc_confirmed {
                         ttl_ms = ttl_ms.saturating_sub((now - sig.bar_close_ms).max(0));
-                        if ttl_ms <= 0 { skip("OFCC_EXPIRED"); continue; }
+                        if ttl_ms <= 0 {
+                            if is_s1 { s1_stop = Some("OFCC_EXPIRED"); }
+                            skip("OFCC_EXPIRED");
+                            continue;
+                        }
+                    }
+                    if is_s1 {
+                        s1_stop = Some("signal");
                     }
                     let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms, cancel_beyond: sig.cancel_beyond.map(to_dec), knn_features: features, knn_signal_ms: features.map(|_| sig.bar_close_ms) };
                     match mgr.submit(it, now).await {
@@ -545,10 +741,35 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
                     }
                 }
                 Err(r) => {
+                    if is_s1 { s1_stop = Some(r.code()); }
                     skip(r.code());
                     println!("  sinyal {} {} {:?} → SKIP {}", sig.strategy.code(), sym, sig.side, r.code());
                 }
             }
+        }
+        if ids.contains(&apex_strategies::StrategyId::S1Tfp) {
+            let (payload, summary) = build_s1_trace_json(
+                now,
+                sym,
+                siklus,
+                &series,
+                t,
+                state,
+                dec.long_ok,
+                dec.short_ok,
+                included,
+                &fails,
+                &f,
+                cfg,
+                s1_cand_side,
+                s1_cand_entry,
+                s1_cand_sl,
+                s1_sized,
+                ofcc_trace,
+                s1_stop,
+            );
+            mgr.audit.log(now, "S1_TRACE", payload);
+            println!("{summary}");
         }
     }
     Ok(())
@@ -588,5 +809,83 @@ mod reversal_shadow_tests {
                 assert!(details[symbol][tf]["fib_618"].is_number(), "{symbol} {tf}");
             }
         }
+    }
+
+    #[test]
+    fn s1_trace_logs_all_required_fields() {
+        let m15 = make_bars(400, 0, Tf::M15.ms(), 2500.0);
+        let h1 = make_bars(100, 0, Tf::H1.ms(), 2500.0);
+        let series = SymbolSeries::new("ETHUSDT", &m15, &h1);
+        let cfg = AllConfig::load(Path::new("../../config")).unwrap();
+        let f = apex_core::SymbolFilters::synthetic(
+            "ETHUSDT",
+            to_dec(0.01),
+            to_dec(0.001),
+            to_dec(20.0),
+        );
+        let t = m15.len() - 1;
+        let (payload, summary) = build_s1_trace_json(
+            1793855700000,
+            "ETHUSDT",
+            1,
+            &series,
+            t,
+            SymState::TrendUp,
+            true,
+            false,
+            true,
+            &[],
+            &f,
+            &cfg,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let audit = apex_core::audit::AuditLog::in_memory();
+        audit.log(1793855700000, "S1_TRACE", payload);
+        let evs = audit.events();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0]["event"], "S1_TRACE");
+        let d = &evs[0]["data"];
+        for field in [
+            "ts",
+            "symbol",
+            "siklus",
+            "session_ok",
+            "session_hour_utc",
+            "trend_ok",
+            "trend_4h_ok",
+            "volume_gate_ok",
+            "volume_gate_fails",
+            "atr",
+            "srv",
+            "atr_pctile",
+            "fvg_gap_atr",
+            "body_frac",
+            "mid_delta",
+            "sell_push",
+            "delta",
+            "p90_absdelta",
+            "close_pos",
+            "pivot_price",
+            "sl",
+            "sl_pct",
+            "ofcc_outcome",
+            "ofcc_seen",
+            "ofcc_remaining_bars",
+            "sizing_qty",
+            "min_qty",
+            "min_notional",
+            "notional",
+            "stop_at",
+        ] {
+            assert!(d.get(field).is_some(), "missing field {field}");
+        }
+        assert!(summary.contains("S1_TRACE"));
+        assert!(summary.contains("symbol=ETHUSDT"));
+        assert!(summary.contains("stop_at="));
     }
 }

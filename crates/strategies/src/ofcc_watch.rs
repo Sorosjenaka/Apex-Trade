@@ -10,6 +10,17 @@ pub enum Outcome {
     Expired,
 }
 
+impl Outcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::Waiting => "waiting",
+            Outcome::Confirmed => "confirmed",
+            Outcome::Rejected => "rejected",
+            Outcome::Expired => "expired",
+        }
+    }
+}
+
 /// One FVG setup. The existing order is only submitted after `Confirmed`;
 /// this avoids using the touching bar's final delta to pretend an earlier fill was filtered.
 #[derive(Clone, Debug)]
@@ -66,6 +77,10 @@ impl S1Watch {
             finished: false,
             timeframe,
         })
+    }
+    /// Number of closed bars observed since setup.
+    pub fn seen(&self) -> u32 {
+        self.seen
     }
     /// Original validity window remaining after observed closed bars.
     pub fn remaining_bars(&self) -> u32 {

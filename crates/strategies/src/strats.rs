@@ -13,17 +13,21 @@ fn sl_ok(entry: f64, sl: f64, p: &StrategyParams) -> bool {
 }
 
 /// OFCC "dorongan jual": delta ≤ −P90(|delta|) dan close di 25% bawah range.
-fn sell_push(v: &View, i: usize) -> bool {
+pub fn sell_push(v: &View, i: usize) -> bool {
     let p90 = v.f15.p90_absdelta[i];
     fin(p90) && v.f15.delta[i] <= -p90 && v.m15[i].close_pos() <= 0.25
 }
 
-fn session_ok(as_of: i64, session: &str) -> bool {
+pub fn session_hour_utc(as_of: i64) -> u32 {
+    ((as_of / 3_600_000).rem_euclid(24)) as u32
+}
+
+pub fn session_ok(as_of: i64, session: &str) -> bool {
     let s = session.trim().to_ascii_lowercase();
     if s.is_empty() || s == "all" {
         return true;
     }
-    let h = ((as_of / 3_600_000).rem_euclid(24)) as u32;
+    let h = session_hour_utc(as_of);
     match s.as_str() {
         "asia" => h < 8,
         "london" => (8..16).contains(&h),
@@ -32,6 +36,184 @@ fn session_ok(as_of: i64, session: &str) -> bool {
         "asia_london" => h < 16,
         "asia_ny" => h < 8 || (13..21).contains(&h),
         _ => true,
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct S1Trace {
+    pub session_ok: bool,
+    pub session_hour_utc: u32,
+    pub trend_ok: bool,
+    pub trend_4h_ok: bool,
+    pub atr: Option<f64>,
+    pub srv: Option<f64>,
+    pub atr_pctile: Option<f64>,
+    pub fvg_gap_atr: Option<f64>,
+    pub body_frac: Option<f64>,
+    pub mid_delta: Option<f64>,
+    pub sell_push: bool,
+    pub delta: Option<f64>,
+    pub p90_absdelta: Option<f64>,
+    pub close_pos: Option<f64>,
+    pub pivot_price: Option<f64>,
+    pub sl: Option<f64>,
+    pub sl_pct: Option<f64>,
+    pub entry_est: Option<f64>,
+    pub first_fail: Option<&'static str>,
+}
+
+/// Pure diagnostic trace of `s1_tfp` stages without altering strategy behavior.
+pub fn trace_s1(v: &View, p: &StrategyParams) -> S1Trace {
+    let t = v.t();
+    let hour_utc = session_hour_utc(v.as_of);
+    let sess_ok = session_ok(v.as_of, &p.s1_session);
+    let trend_ok = v.trend_ok;
+    let trend_4h_ok = v.trend_4h_ok;
+    let opt_fin = |x: f64| if x.is_finite() { Some(x) } else { None };
+    let conv = |x: f64| match v.side {
+        apex_core::types::Side::Long => x,
+        apex_core::types::Side::Short => if x > 0.0 { 1.0 / x } else { f64::NAN },
+    };
+    let atr_raw = v.f15.atr.get(t).copied().unwrap_or(f64::NAN);
+    let srv_raw = v.f15.srv.get(t).copied().unwrap_or(f64::NAN);
+    let ap_raw = v.f15.atr_pctile.get(t).copied().unwrap_or(f64::NAN);
+    let delta_raw = v.f15.delta.get(t).copied().unwrap_or(f64::NAN);
+    let p90_raw = v.f15.p90_absdelta.get(t).copied().unwrap_or(f64::NAN);
+    let close_pos_raw = v.m15.get(t).map(|b| b.close_pos()).unwrap_or(f64::NAN);
+    let spush = if t < v.m15.len() { sell_push(v, t) } else { false };
+
+    let mut fvg_gap_atr = None;
+    let mut body_frac = None;
+    let mut mid_delta = None;
+    let mut pivot_price = None;
+    let mut sl_out = None;
+    let mut sl_pct_out = None;
+    let mut entry_est = None;
+    let mut gap_ok = false;
+    let mut body_ok = false;
+    let mut sl_pass = false;
+
+    if t >= 2 && t < v.m15.len() {
+        let (b0, b1, b2) = (&v.m15[t - 2], &v.m15[t - 1], &v.m15[t]);
+        let gap = b2.low - b0.high;
+        if fin(atr_raw) && atr_raw > 0.0 {
+            fvg_gap_atr = opt_fin(gap / atr_raw);
+        }
+        gap_ok = fin(atr_raw) && gap > 0.0 && gap >= p.s1_gap_atr * atr_raw;
+        body_frac = if b1.range() > 0.0 { opt_fin(b1.body() / b1.range()) } else { Some(0.0) };
+        let md = v.f15.delta[t - 1];
+        mid_delta = opt_fin(md);
+        body_ok = b1.close > b1.open && b1.range() > 0.0 && b1.body() / b1.range() >= p.s1_body_frac && md > 0.0;
+
+        let entry = (b2.low + b0.high) / 2.0;
+        entry_est = opt_fin(conv(entry));
+        let base0 = b0.low.min(b1.low).min(b2.low);
+        let lookback = p.s1_pivot_lookback.max(1);
+        if fin(atr_raw) && entry > 0.0 {
+            if lookback <= 1 {
+                let mut base = base0;
+                let mut pv_px = None;
+                if let Some(pv) = v.piv15_3.iter().rev().find(|x| !x.high && x.price < entry) {
+                    base = base.min(pv.price);
+                    pv_px = Some(pv.price);
+                }
+                let cand = base - p.sl_buffer_atr * atr_raw;
+                sl_pass = sl_ok(entry, cand, p);
+                let (re, rs) = (conv(entry), conv(cand));
+                pivot_price = pv_px.and_then(|x| opt_fin(conv(x)));
+                sl_out = opt_fin(rs);
+                sl_pct_out = if re.is_finite() && rs.is_finite() && re > 0.0 { opt_fin((re - rs).abs() / re) } else { None };
+            } else {
+                let mut found: Option<(f64, f64)> = None;
+                let mut first_cand: Option<(f64, f64)> = None;
+                for pv in v.piv15_3.iter().rev().filter(|x| !x.high && x.price < entry).take(lookback) {
+                    let cand = base0.min(pv.price) - p.sl_buffer_atr * atr_raw;
+                    if first_cand.is_none() {
+                        first_cand = Some((pv.price, cand));
+                    }
+                    if sl_ok(entry, cand, p) {
+                        found = Some((pv.price, cand));
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    let h_atr = v.h().and_then(|h| v.f1.atr.get(h).copied()).unwrap_or(atr_raw);
+                    let buf = if fin(h_atr) && h_atr > 0.0 { p.sl_buffer_atr * h_atr } else { p.sl_buffer_atr * atr_raw };
+                    for pv in v.piv1h_3.iter().rev().filter(|x| !x.high && x.price < entry).take(lookback) {
+                        let cand = base0.min(pv.price) - buf;
+                        if first_cand.is_none() {
+                            first_cand = Some((pv.price, cand));
+                        }
+                        if sl_ok(entry, cand, p) {
+                            found = Some((pv.price, cand));
+                            break;
+                        }
+                    }
+                }
+                if let Some((pv_px, cand)) = found {
+                    sl_pass = true;
+                    let (re, rs) = (conv(entry), conv(cand));
+                    pivot_price = opt_fin(conv(pv_px));
+                    sl_out = opt_fin(rs);
+                    sl_pct_out = if re.is_finite() && rs.is_finite() && re > 0.0 { opt_fin((re - rs).abs() / re) } else { None };
+                } else if let Some((pv_px, cand)) = first_cand {
+                    sl_pass = false;
+                    let (re, rs) = (conv(entry), conv(cand));
+                    pivot_price = opt_fin(conv(pv_px));
+                    sl_out = opt_fin(rs);
+                    sl_pct_out = if re.is_finite() && rs.is_finite() && re > 0.0 { opt_fin((re - rs).abs() / re) } else { None };
+                }
+            }
+        }
+    }
+
+    let atr_pct_ok = !(p.s1_atr_pctile_min > 0.0 || p.s1_atr_pctile_max < 100.0)
+        || (fin(ap_raw) && ap_raw >= p.s1_atr_pctile_min && ap_raw <= p.s1_atr_pctile_max);
+
+    let first_fail = if t < 3 {
+        Some("insufficient_bars")
+    } else if !trend_ok {
+        Some("trend_ok")
+    } else if p.s1_trend_4h && !trend_4h_ok {
+        Some("trend_4h_ok")
+    } else if !sess_ok {
+        Some("session_ok")
+    } else if !fin(atr_raw) || !fin(srv_raw) || srv_raw < p.s1_srv_min {
+        Some("srv")
+    } else if !atr_pct_ok {
+        Some("atr_pctile")
+    } else if !gap_ok {
+        Some("fvg_gap")
+    } else if !body_ok {
+        Some("fvg_body_delta")
+    } else if p.s1_direct_limit && spush {
+        Some("sell_push")
+    } else if !sl_pass {
+        Some("sl_range")
+    } else {
+        None
+    };
+
+    S1Trace {
+        session_ok: sess_ok,
+        session_hour_utc: hour_utc,
+        trend_ok,
+        trend_4h_ok,
+        atr: opt_fin(atr_raw),
+        srv: opt_fin(srv_raw),
+        atr_pctile: opt_fin(ap_raw),
+        fvg_gap_atr,
+        body_frac,
+        mid_delta,
+        sell_push: spush,
+        delta: opt_fin(delta_raw),
+        p90_absdelta: opt_fin(p90_raw),
+        close_pos: opt_fin(close_pos_raw),
+        pivot_price,
+        sl: sl_out,
+        sl_pct: sl_pct_out,
+        entry_est,
+        first_fail,
     }
 }
 
