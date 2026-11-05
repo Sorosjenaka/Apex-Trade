@@ -73,6 +73,14 @@ pub struct StrategyParams {
     pub s1_body_frac: f64,
     pub s1_srv_min: f64,
     pub s1_ttl: u32,
+    pub s1_pivot_lookback: usize,
+    pub s1_direct_limit: bool,
+    pub s1_trend_4h: bool,
+    pub s1_partial_1r_trail: bool,
+    pub s1_session: String,
+    pub s1_atr_pctile_min: f64,
+    pub s1_atr_pctile_max: f64,
+    pub s1_rr: f64,
     pub s2_pool_age: usize,
     pub s2_reclaim_bars: usize,
     pub s2_ttl: u32,
@@ -103,6 +111,14 @@ impl Default for StrategyParams {
             s1_body_frac: 0.60,
             s1_srv_min: 0.20,
             s1_ttl: 16,
+            s1_pivot_lookback: 1,
+            s1_direct_limit: false,
+            s1_trend_4h: false,
+            s1_partial_1r_trail: false,
+            s1_session: String::new(),
+            s1_atr_pctile_min: 0.0,
+            s1_atr_pctile_max: 100.0,
+            s1_rr: 0.0,
             s2_pool_age: 10,
             s2_reclaim_bars: 3,
             s2_ttl: 4,
@@ -145,6 +161,7 @@ pub fn mirror_bar(b: &Bar) -> Bar {
 #[derive(Clone, Debug, Default)]
 pub struct F15 {
     pub atr: Vec<f64>,
+    pub atr_pctile: Vec<f64>,
     pub ema21: Vec<f64>,
     pub rsi: Vec<f64>,
     pub srv: Vec<f64>,
@@ -172,6 +189,7 @@ pub struct F1h {
     pub apexwave: Vec<f64>,
     pub dec: Vec<i8>,
     pub vol_sma20: Vec<f64>,
+    pub trend_4h: Vec<bool>,
 }
 
 fn rolling_pct_prev(v: &[f64], window: usize, p: f64, every: usize) -> Vec<f64> {
@@ -206,8 +224,11 @@ impl F15 {
         }
         let mso = ind::ema(&stoch, 5);
         let mso_sig = ind::ema(&mso, 9);
+        let atr = ind::atr(b, 14);
+        let atr_pctile = ind::percent_rank(&atr, 100);
         F15 {
-            atr: ind::atr(b, 14),
+            atr,
+            atr_pctile,
             ema21: ind::ema(&c, 21),
             rsi: ind::rsi_wilder(&c, 14),
             srv: ind::srv(&c, 30, 3).0,
@@ -227,6 +248,23 @@ impl F1h {
     pub fn compute(b: &[Bar]) -> F1h {
         let c = ind::closes(b);
         let vol: Vec<f64> = b.iter().map(|x| x.volume).collect();
+        let h4 = ind::aggregate(b, Tf::H1, Tf::H4);
+        let c4 = ind::closes(&h4);
+        let e20_4 = ind::ema(&c4, 20);
+        let e50_4 = ind::ema(&c4, 50);
+        let mut trend_4h = vec![false; b.len()];
+        let mut k = 0usize;
+        let mut last: Option<usize> = None;
+        for i in 0..b.len() {
+            let close_t = b[i].open_time + Tf::H1.ms();
+            while k < h4.len() && h4[k].open_time + Tf::H4.ms() <= close_t {
+                last = Some(k);
+                k += 1;
+            }
+            if let Some(j) = last {
+                trend_4h[i] = c4[j].is_finite() && e20_4[j].is_finite() && e50_4[j].is_finite() && c4[j] > e20_4[j] && e20_4[j] >= e50_4[j];
+            }
+        }
         F1h {
             atr: ind::atr(b, 14),
             ema20: ind::ema(&c, 20),
@@ -236,6 +274,7 @@ impl F1h {
             apexwave: ind::apexwave_bull(b),
             dec: ind::decycler_state(b, 115, 14, 0.1, 3, 0.05, 0.5, 0.45),
             vol_sma20: ind::sma(&vol, 20),
+            trend_4h,
         }
     }
 }
@@ -303,6 +342,7 @@ impl SymbolSeries {
 /// Slice fitur 15m terpotong sampai t.
 pub struct F15View<'a> {
     pub atr: &'a [f64],
+    pub atr_pctile: &'a [f64],
     pub ema21: &'a [f64],
     pub rsi: &'a [f64],
     pub srv: &'a [f64],
@@ -340,6 +380,8 @@ pub struct View<'a> {
     pub piv1h_3: &'a [Pivot],
     /// Screener state simbol searah sisi (TREND_UP untuk long, TREND_DOWN untuk short).
     pub trend_ok: bool,
+    /// Trend 4h tertutup terakhir searah sisi (close_4h > ema20_4h >= ema50_4h di ruang sisi).
+    pub trend_4h_ok: bool,
     pub as_of: Ms,
     pub entry_tf: Tf,
 }
@@ -376,6 +418,7 @@ pub fn make_view<'a>(sym: &'a SymbolSeries, s: &'a SideSeries, t: usize, state: 
         m15: cut(&s.m15, n),
         f15: F15View {
             atr: cut(&f.atr, n),
+            atr_pctile: cut(&f.atr_pctile, n),
             ema21: cut(&f.ema21, n),
             rsi: cut(&f.rsi, n),
             srv: cut(&f.srv, n),
@@ -403,6 +446,7 @@ pub fn make_view<'a>(sym: &'a SymbolSeries, s: &'a SideSeries, t: usize, state: 
         piv15_5: piv_cut(&s.piv15_5, t),
         piv1h_3: piv_cut(&s.piv1h_3, hn.saturating_sub(1)),
         trend_ok: state == want,
+        trend_4h_ok: hn.checked_sub(1).and_then(|h| g.trend_4h.get(h).copied()).unwrap_or(false),
         as_of: s.m15[t].open_time + sym.entry_tf.ms(),
         entry_tf: sym.entry_tf,
     }

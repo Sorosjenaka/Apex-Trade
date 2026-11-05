@@ -177,6 +177,9 @@ struct Position {
     fee_in: f64,
     funding: f64,
     fill_k: usize,
+    r_dist: f64,
+    partial_done: bool,
+    partial_px: f64,
 }
 
 struct SymCtx {
@@ -262,6 +265,7 @@ fn hash_strategy_params(p: &StrategyParams) -> u64 {
         p.sl_buffer_atr, p.s1_gap_atr, p.s1_body_frac, p.s1_srv_min,
         p.s3_sbpo_min, p.s4_min_height, p.s5_distrank_min,
         p.s5_apexwave_min, p.s5_impulse_atr, p.sl_min_pct, p.sl_max_pct,
+        p.s1_atr_pctile_min, p.s1_atr_pctile_max, p.s1_rr,
     ] {
         x.to_bits().hash(&mut h);
     }
@@ -269,6 +273,11 @@ fn hash_strategy_params(p: &StrategyParams) -> u64 {
         p.s1_ttl, p.s2_pool_age, p.s2_reclaim_bars, p.s2_ttl,
         p.s3_retest_bars, p.s3_market, p.s3_ttl, p.s4_min_range,
         p.s4_max_range, p.s4_lps_bars, p.s4_ttl, p.s5_ttl,
+    )
+        .hash(&mut h);
+    (
+        p.s1_pivot_lookback, p.s1_direct_limit, p.s1_trend_4h,
+        p.s1_partial_1r_trail, p.s1_session.as_str(),
     )
         .hash(&mut h);
     h.finish()
@@ -538,8 +547,9 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let b = &entries[p.sym][i];
             let s = p.sig.side.sign();
             let fill = b.open * (1.0 + s * (cfg.market_slip + cfg.extra_slip));
+            let r_dist = (p.entry - p.sl).abs();
             // SL/TP relatif harga terencana; bila open sudah melewati SL → langsung keluar SL di open (konservatif)
-            open.push(Position { entry_ms: t_open, fill, fee_in: fill * p.qty * fee_t, funding: 0.0, fill_k: kk, p });
+            open.push(Position { entry_ms: t_open, fill, fee_in: fill * p.qty * fee_t, funding: 0.0, fill_k: kk, r_dist, partial_done: false, partial_px: 0.0, p });
         }
 
         // --- 1. funding, 2. exit intrabar
@@ -555,7 +565,8 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let s = pos.p.sig.side.sign();
             for &(ft, rate) in si.funding.iter().filter(|(ft, _)| *ft >= t_open && *ft < t_close && *ft > pos.entry_ms) {
                 let _ = ft;
-                pos.funding += s * rate * cfg.funding_mult * pos.p.qty * b.open;
+                let rem_frac = if pos.partial_done { 0.5 } else { 1.0 };
+                pos.funding += s * rate * cfg.funding_mult * (pos.p.qty * rem_frac) * b.open;
             }
             let (sl, tp) = (pos.p.sl, pos.p.tp);
             let sl_hit = if s > 0.0 { b.low <= sl } else { b.high >= sl };
@@ -570,13 +581,36 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                 let px = if gap { b.open } else { tp };
                 Some((px * (1.0 - s * slip_sl), ExitKind::TakeProfit))
             } else {
+                if !on_fill_bar && cfg.params.s1_partial_1r_trail && pos.p.sig.strategy == StrategyId::S1Tfp && pos.r_dist > 0.0 {
+                    if !pos.partial_done {
+                        let tp_1r = pos.fill + s * pos.r_dist;
+                        let hit_1r = if s > 0.0 { b.high >= tp_1r } else { b.low <= tp_1r };
+                        if hit_1r {
+                            let gap1 = if s > 0.0 { b.open >= tp_1r } else { b.open <= tp_1r };
+                            pos.partial_px = (if gap1 { b.open } else { tp_1r }) * (1.0 - s * slip_sl);
+                            pos.partial_done = true;
+                            if s > 0.0 {
+                                pos.p.sl = pos.p.sl.max(pos.fill);
+                            } else {
+                                pos.p.sl = pos.p.sl.min(pos.fill);
+                            }
+                        }
+                    }
+                    if pos.partial_done {
+                        if s > 0.0 {
+                            pos.p.sl = pos.p.sl.max(b.close - pos.r_dist);
+                        } else {
+                            pos.p.sl = pos.p.sl.min(b.close + pos.r_dist);
+                        }
+                    }
+                }
                 None
             };
             match exit {
                 Some((px, kind)) => {
                     let tr = close_trade(&pos, px, t_open + if kind == ExitKind::StopLoss { 1 } else { 2 }, kind, fee_t, si);
                     wallet += tr.pnl_net;
-                    risk.record_exit(kind, tr.pnl_net, t_close, rc);
+                    risk.record_exit(tr.exit_kind, tr.pnl_net, t_close, rc);
                     trades.push(tr);
                 }
                 None => still.push(pos),
@@ -652,7 +686,8 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             if penetrated {
                 // Baseline extra_slip = 0 → fill di limit. Stress G-05 menggeser fill berlawanan arah.
                 let fill = p.entry * (1.0 + s * cfg.extra_slip);
-                let mut pos = Position { entry_ms: t_open, fill, fee_in: fill * p.qty * fee_m, funding: 0.0, fill_k: kk, p };
+                let r_dist = (p.entry - p.sl).abs();
+                let mut pos = Position { entry_ms: t_open, fill, fee_in: fill * p.qty * fee_m, funding: 0.0, fill_k: kk, r_dist, partial_done: false, partial_px: 0.0, p };
                 // bar fill: SL boleh kena (konservatif), TP tidak
                 let sl_hit = if s > 0.0 { b.low <= pos.p.sl } else { b.high >= pos.p.sl };
                 if sl_hit {
@@ -799,17 +834,27 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind, filters: &si.filters, risk: rc };
             match risk.evaluate_entry(&ctx, &inp, rc) {
                 Ok(sz) => {
-                    let ofcc_watch = if sig.strategy == StrategyId::S1Tfp {
+                    let ofcc_watch = if sig.strategy == StrategyId::S1Tfp && !cfg.params.s1_direct_limit {
                         match apex_strategies::ofcc_watch::S1Watch::new_with_tf(sig.clone(), cfg.entry_tf) {
                             Some(w) => Some(w),
                             None => { bump(&mut skips, "OFCC_INVALID_SETUP"); continue; }
                         }
                     } else { None };
+                    let tp = if sig.strategy == StrategyId::S1Tfp && cfg.params.s1_rr > 0.0 {
+                        let sgn = match sig.side {
+                            Side::Long => rust_decimal::Decimal::ONE,
+                            Side::Short => -rust_decimal::Decimal::ONE,
+                        };
+                        let dist = (sz.entry - sz.sl).abs();
+                        to_f64(si.filters.round_tp(sig.side, sz.entry + sgn * to_dec(cfg.params.s1_rr) * dist))
+                    } else {
+                        to_f64(sz.tp)
+                    };
                     let p = Pending {
                         sym: j,
                         entry: to_f64(sz.entry),
                         sl: to_f64(sz.sl),
-                        tp: to_f64(sz.tp),
+                        tp,
                         qty: to_f64(sz.qty),
                         risk: to_f64(sz.risk),
                         margin: to_f64(sz.margin),
@@ -866,10 +911,16 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
 
 fn close_trade(pos: &Position, px: f64, exit_ms: Ms, kind: ExitKind, fee_t: f64, si: &SymbolInput) -> Trade {
     let s = pos.p.sig.side.sign();
-    let fee_out = px * pos.p.qty * fee_t;
-    let gross = s * (px - pos.fill) * pos.p.qty;
+    let eff_px = if pos.partial_done { 0.5 * pos.partial_px + 0.5 * px } else { px };
+    let fee_out = eff_px * pos.p.qty * fee_t;
+    let gross = s * (eff_px - pos.fill) * pos.p.qty;
     let fees = pos.fee_in + fee_out;
     let pnl = gross - fees - pos.funding;
+    let eff_kind = if pos.partial_done && pnl > 0.0 && kind == ExitKind::StopLoss {
+        ExitKind::TakeProfit
+    } else {
+        kind
+    };
     Trade {
         symbol: si.symbol.clone(),
         strategy: pos.p.sig.strategy.code().to_string(),
@@ -880,7 +931,7 @@ fn close_trade(pos: &Position, px: f64, exit_ms: Ms, kind: ExitKind, fee_t: f64,
         entry: pos.fill,
         sl: pos.p.sl,
         tp: pos.p.tp,
-        exit: px,
+        exit: eff_px,
         qty: pos.p.qty,
         notional: pos.fill * pos.p.qty,
         margin: pos.p.margin,
@@ -889,7 +940,7 @@ fn close_trade(pos: &Position, px: f64, exit_ms: Ms, kind: ExitKind, fee_t: f64,
         funding: pos.funding,
         pnl_net: pnl,
         r: if pos.p.risk > 0.0 { pnl / pos.p.risk } else { 0.0 },
-        exit_kind: kind,
+        exit_kind: eff_kind,
         regime: pos.p.regime.clone(),
     }
 }

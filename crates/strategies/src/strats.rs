@@ -18,15 +18,44 @@ fn sell_push(v: &View, i: usize) -> bool {
     fin(p90) && v.f15.delta[i] <= -p90 && v.m15[i].close_pos() <= 0.25
 }
 
+fn session_ok(as_of: i64, session: &str) -> bool {
+    let s = session.trim().to_ascii_lowercase();
+    if s.is_empty() || s == "all" {
+        return true;
+    }
+    let h = ((as_of / 3_600_000).rem_euclid(24)) as u32;
+    match s.as_str() {
+        "asia" => h < 8,
+        "london" => (8..16).contains(&h),
+        "ny" => (13..21).contains(&h),
+        "london_ny" => (8..21).contains(&h),
+        "asia_london" => h < 16,
+        "asia_ny" => h < 8 || (13..21).contains(&h),
+        _ => true,
+    }
+}
+
 /// S1 Trend FVG Pullback.
 pub fn s1_tfp(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     let t = v.t();
     if t < 3 || !v.trend_ok {
         return None;
     }
+    if p.s1_trend_4h && !v.trend_4h_ok {
+        return None;
+    }
+    if !session_ok(v.as_of, &p.s1_session) {
+        return None;
+    }
     let (atr, srv) = (v.f15.atr[t], v.f15.srv[t]);
     if !fin(atr) || !fin(srv) || srv < p.s1_srv_min {
         return None;
+    }
+    if p.s1_atr_pctile_min > 0.0 || p.s1_atr_pctile_max < 100.0 {
+        let ap = v.f15.atr_pctile[t];
+        if !fin(ap) || ap < p.s1_atr_pctile_min || ap > p.s1_atr_pctile_max {
+            return None;
+        }
     }
     let (b0, b1, b2) = (&v.m15[t - 2], &v.m15[t - 1], &v.m15[t]);
     let gap = b2.low - b0.high;
@@ -36,15 +65,44 @@ pub fn s1_tfp(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     if b1.close <= b1.open || b1.range() <= 0.0 || b1.body() / b1.range() < p.s1_body_frac || v.f15.delta[t - 1] <= 0.0 {
         return None;
     }
-    let entry = (b2.low + b0.high) / 2.0;
-    let mut base = b0.low.min(b1.low).min(b2.low);
-    if let Some(pv) = v.piv15_3.iter().rev().find(|x| !x.high && x.price < entry) {
-        base = base.min(pv.price);
-    }
-    let sl = base - p.sl_buffer_atr * atr;
-    if !sl_ok(entry, sl, p) {
+    if p.s1_direct_limit && sell_push(v, t) {
         return None;
     }
+    let entry = (b2.low + b0.high) / 2.0;
+    let base0 = b0.low.min(b1.low).min(b2.low);
+    let lookback = p.s1_pivot_lookback.max(1);
+    let sl = if lookback <= 1 {
+        let mut base = base0;
+        if let Some(pv) = v.piv15_3.iter().rev().find(|x| !x.high && x.price < entry) {
+            base = base.min(pv.price);
+        }
+        let cand = base - p.sl_buffer_atr * atr;
+        if !sl_ok(entry, cand, p) {
+            return None;
+        }
+        cand
+    } else {
+        let mut found = None;
+        for pv in v.piv15_3.iter().rev().filter(|x| !x.high && x.price < entry).take(lookback) {
+            let cand = base0.min(pv.price) - p.sl_buffer_atr * atr;
+            if sl_ok(entry, cand, p) {
+                found = Some(cand);
+                break;
+            }
+        }
+        if found.is_none() {
+            let h_atr = v.h().and_then(|h| v.f1.atr.get(h).copied()).unwrap_or(atr);
+            let buf = if fin(h_atr) && h_atr > 0.0 { p.sl_buffer_atr * h_atr } else { p.sl_buffer_atr * atr };
+            for pv in v.piv1h_3.iter().rev().filter(|x| !x.high && x.price < entry).take(lookback) {
+                let cand = base0.min(pv.price) - buf;
+                if sl_ok(entry, cand, p) {
+                    found = Some(cand);
+                    break;
+                }
+            }
+        }
+        found?
+    };
     Some(RawSignal { entry, sl, market: false, ttl: p.s1_ttl, cancel_beyond: Some(b0.high), note: format!("FVG gap={:.3}ATR", gap / atr) })
 }
 

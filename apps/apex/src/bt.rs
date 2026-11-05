@@ -181,6 +181,14 @@ fn append_ledger_with(
         "chop_trend_share_min": c.chop.trend_share_min,
         "chop_range": c.screener.chop_range,
         "chop_trend": c.screener.chop_trend,
+        "s1_pivot_lookback": c.params.s1_pivot_lookback,
+        "s1_direct_limit": c.params.s1_direct_limit,
+        "s1_trend_4h": c.params.s1_trend_4h,
+        "s1_partial_1r_trail": c.params.s1_partial_1r_trail,
+        "s1_session": c.params.s1_session,
+        "s1_atr_pctile_min": c.params.s1_atr_pctile_min,
+        "s1_atr_pctile_max": c.params.s1_atr_pctile_max,
+        "s1_rr": c.params.s1_rr,
     });
     if let Some(ps) = per_strategy {
         let map: serde_json::Map<String, serde_json::Value> = ps
