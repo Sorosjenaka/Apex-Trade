@@ -64,6 +64,18 @@ Setelah izin eksplisit pengguna, master lokal di-fast-forward dari `07a768a` ke 
 
 Aturan IS/VAL proyek (`Rules.md` §4.3) menetapkan VAL mulai 2025-07-01 UTC. Validator sebelumnya salah menggunakan split sweep eksploratif 2026-01-01; boundary pencacahan diperbaiki. Sweep yang menggunakan periode VAL untuk memilih kandidat tetap tidak independen: G-09 ditandai INCONCLUSIVE dan nilai sweep hanya diagnostik. Holdout tetap terkunci.
 
+Audit fetch menemukan endpoint funding Binance sebelumnya menerima `endTime` inklusif tepat di awal holdout (2026-05-01 00:00 UTC). Fetch yang sedang berjalan dihentikan setelah beberapa simbol; permintaan funding tersebut mungkin sudah mengunduh satu titik di batas itu. Tidak ada backtest holdout dan simulasi pra-holdout menyaring funding sebelum waktu akhir. Kode fetch diperbaiki agar meminta `end - 1 ms` dan memfilter ulang hasil; `cargo test -p apex-data` lulus 6/6. Fetch diulang ke direktori baru.
+
 ### Opsi a — universe (persiapan, belum ada hasil backtest)
 
 Ranking memakai jumlah quote volume harian pada Desember 2024, sebelum periode uji. Metadata exchange dan allowlist diambil dari snapshot saat ini; hasil rentan survivorship bias dan bukan universe point-in-time lengkap. Dari 239 kontrak kandidat, 239 memiliki 31 bar harian lengkap dan 40 teratas dipilih. BTC hanya konteks; ETH termasuk universe. Konfigurasi riset terpisah dengan aturan risk dan volume gate tetap; fetch data publik sedang berjalan. Tidak ada angka performa atau rekomendasi kelayakan sebelum replay selesai. Opsi b–d belum diuji.
+
+### Baseline untuk perbandingan (replay Reader, universe default, 2025-01-01–2026-05-01 eksklusif)
+
+| Run terpisah | Sinyal | Trade | IS | VAL | WR | PF | E[R] | E VAL | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S1 | 297 | 29 | 12 | 17 | 48,28% | 1,776 | +0,402 | +0,195 | $2,99 / 3,01R |
+| S3 | 11 | 3 | 1 | 2 | 0% | 0 | −0,999 | −0,998 | $2,99 / 3,00R |
+| Gabungan S1+S3 | 308 | 31 | 12 | 19 | 45,16% | 1,566 | +0,311 | +0,069 | $4,99 / 5,01R |
+
+Replay memakai biaya model dan saldo awal $60; IS berakhir 2025-07-01 dan VAL sesudahnya. Sinyal dan hasil per strategi dari run masing-masing, sedangkan gabungan berbagi slot dan saldo. S1: konsentrasi trade tertinggi DOGE 5/29 (17,2%), bulan November 2025 dan Januari 2026 masing-masing 4/29 (13,8%); laba neto DOGE $6,55 dari total $11,54, April 2025 $5,71 dari total $11,54. S3: masing-masing LINK, SUI, XRP 1/3; Februari 2026 2/3, total neto negatif. Distribusi lengkap simbol/bulan dapat dihitung ulang dengan `research/tc3_metrics.py` pada JSON replay. Sampel IS/VAL jauh di bawah G-02 dan VAL pernah dipakai riset sebelumnya; angka ini tidak membuktikan profit konsisten.

@@ -20,6 +20,11 @@ fn num(v: &Value) -> f64 {
     }
 }
 
+/// Translate an exclusive internal endpoint into Binance's inclusive endpoint.
+fn funding_end_time(start: Ms, end: Ms) -> Option<Ms> {
+    (start < end).then(|| end - 1)
+}
+
 /// Parse satu baris kline REST `[openTime, o, h, l, c, v, closeTime, qv, trades, tbb, tbq, _]`.
 pub fn parse_kline_row(r: &Value) -> Option<Bar> {
     let a = r.as_array()?;
@@ -146,18 +151,29 @@ impl PublicClient {
 
     pub async fn funding_history(&self, sym: &str, start: Ms, end: Ms) -> anyhow::Result<Vec<(Ms, f64)>> {
         let mut out = Vec::new();
+        let Some(end_time) = funding_end_time(start, end) else {
+            return Ok(out);
+        };
         let mut cur = start;
         loop {
-            let v = self.get("/fapi/v1/fundingRate", &[("symbol", sym.into()), ("startTime", cur.to_string()), ("endTime", end.to_string()), ("limit", "1000".into())]).await?;
+            // Binance's endTime is inclusive, while our data window is [start, end).
+            let v = self.get("/fapi/v1/fundingRate", &[("symbol", sym.into()), ("startTime", cur.to_string()), ("endTime", end_time.to_string()), ("limit", "1000".into())]).await?;
             let a = v.as_array().cloned().unwrap_or_default();
             if a.is_empty() {
                 break;
             }
+            let previous_len = out.len();
             for r in &a {
-                out.push((r["fundingTime"].as_i64().unwrap_or(0), num(&r["fundingRate"])));
+                let time = r["fundingTime"].as_i64().ok_or_else(|| anyhow::anyhow!("fundingTime missing"))?;
+                if time >= cur && time < end {
+                    out.push((time, num(&r["fundingRate"])));
+                }
+            }
+            if out.len() == previous_len {
+                anyhow::bail!("funding response made no progress within requested window");
             }
             let last = out.last().map(|x| x.0).unwrap_or(end);
-            if a.len() < 1000 || last >= end {
+            if a.len() < 1000 || last >= end - 1 {
                 break;
             }
             cur = last + 1;
@@ -169,6 +185,13 @@ impl PublicClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn funding_window_excludes_end_and_empty_windows() {
+        let holdout_start = 1_777_593_600_000;
+        assert_eq!(funding_end_time(1_735_689_600_000, holdout_start), Some(holdout_start - 1));
+        assert_eq!(funding_end_time(holdout_start, holdout_start), None);
+    }
 
     #[test]
     fn kline_row_parse() {
