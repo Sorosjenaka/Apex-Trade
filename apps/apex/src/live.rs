@@ -28,7 +28,11 @@ fn num(v: &Value) -> f64 {
     v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_f64()).unwrap_or(f64::NAN)
 }
 
-pub async fn fetch(cfg: &AllConfig, data: &Path, from: &str, to: &str) -> anyhow::Result<()> {
+fn fetch_intervals(only_5m: bool) -> &'static [Tf] {
+    if only_5m { &[Tf::M5] } else { &[Tf::M15, Tf::H1] }
+}
+
+pub async fn fetch(cfg: &AllConfig, data: &Path, from: &str, to: &str, only_5m: bool) -> anyhow::Result<()> {
     let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
     let (s, e) = (parse_ymd(from).ok_or_else(|| anyhow::anyhow!("--from"))?, parse_ymd(to).ok_or_else(|| anyhow::anyhow!("--to"))?);
     let now = now_ms();
@@ -36,12 +40,15 @@ pub async fn fetch(cfg: &AllConfig, data: &Path, from: &str, to: &str) -> anyhow
     syms.extend(cfg.universe());
     syms.dedup();
     for sym in &syms {
-        for tf in [Tf::M15, Tf::H1] {
+        if only_5m && sym == "BTCDOMUSDT" {
+            continue;
+        }
+        for &tf in fetch_intervals(only_5m) {
             let bars = pc.klines(sym, tf, s, e, now).await?;
             save_klines(&kline_path(data, sym, tf), tf, &bars)?;
             println!("{sym} {} {} bar", tf.binance(), bars.len());
         }
-        if sym != "BTCDOMUSDT" {
+        if !only_5m && sym != "BTCDOMUSDT" {
             let f = pc.funding_history(sym, s, e).await?;
             let p = funding_path(data, sym);
             if let Some(d) = p.parent() {
@@ -550,6 +557,12 @@ async fn on_bar_close<E: FuturesExchange + Feed>(cfg: &AllConfig, mgr: &mut Orde
 #[cfg(test)]
 mod reversal_shadow_tests {
     use super::*;
+
+    #[test]
+    fn research_fetch_does_not_change_default_intervals() {
+        assert_eq!(fetch_intervals(false), &[Tf::M15, Tf::H1]);
+        assert_eq!(fetch_intervals(true), &[Tf::M5]);
+    }
     fn make_bars(n: usize, start: i64, width: i64, base: f64) -> Vec<Bar> {
         (0..n).map(|i| {
             let p = base * (1.0 + 0.0001 * i as f64 + 0.03 * (i as f64 / 9.0).sin());

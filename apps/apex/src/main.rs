@@ -60,6 +60,9 @@ enum Cmd {
         to: String,
         #[arg(long, default_value = "data")]
         data: PathBuf,
+        /// Hanya ambil candle 5m publik untuk riset; tidak menimpa 15m/1h/funding.
+        #[arg(long)]
+        only_5m: bool,
     },
     /// Market Reader (regime global) dari data publik
     Reader,
@@ -118,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut cfg = cfg::AllConfig::load(&cli.config)?;
     match cli.cmd {
-        Cmd::Fetch { from, to, data } => live::fetch(&cfg, &data, &from, &to).await,
+        Cmd::Fetch { from, to, data, only_5m } => live::fetch(&cfg, &data, &from, &to, only_5m).await,
         Cmd::Reader => live::reader(&cfg).await,
         Cmd::Screen { top } => live::screen(&cfg, top).await,
         Cmd::Backtest { o, per_strategy } => bt::backtest(&cfg, &to_bt(o), per_strategy),

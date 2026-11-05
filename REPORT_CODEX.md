@@ -80,6 +80,10 @@ S1 menambah 19 trade VAL dari baseline (17 ke 36), tetapi masih kurang dari 60 d
 
 Rekomendasi sementara: **belum layak validasi penuh atau trading**. Hasil VAL pernah terpapar riset sebelumnya dan pilihan universe memakai snapshot kontrak kini; tidak independen. Seluruh gate tetap NO-GO. Hash backtest yang ada tidak mencakup universe dan data: baseline dan universe menghasilkan hash parameter sama, sehingga direktori dan manifest di atas harus dipakai untuk membedakannya. Ledger per direktori juga belum menjamin hitungan DSR global. Opsi b–d belum diuji.
 
+### Opsi b — entry 5m (persiapan)
+
+Opsi fetch publik `--only-5m` ditambahkan untuk mengambil candle yang kurang tanpa menimpa data 15m/1h/funding; uji `cargo test -p apex` lulus 7/7. Ini belum mengubah timeframe strategi atau membuktikan hasil backtest 5m.
+
 ### Baseline untuk perbandingan (replay Reader, universe default, 2025-01-01–2026-05-01 eksklusif)
 
 | Run terpisah | Sinyal | Trade | IS | VAL | WR | PF | E[R] | E VAL | Max DD |
