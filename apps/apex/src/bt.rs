@@ -35,7 +35,7 @@ pub fn load_market(cfg: &AllConfig, data: &Path, filters_path: &Path) -> anyhow:
     let dom = load_klines(&kline_path(data, "BTCDOMUSDT", Tf::H1)).ok().filter(|v| !v.is_empty());
     let mut symbols = Vec::new();
     for s in cfg.universe() {
-        if s == "BTCUSDT" || s == "BTCDOMUSDT" {
+        if s == "BTCDOMUSDT" {
             continue;
         }
         let (Ok(m15), Ok(h1)) = (load_klines(&kline_path(data, &s, Tf::M15)), load_klines(&kline_path(data, &s, Tf::H1))) else {
@@ -225,12 +225,12 @@ fn pf_print(x: f64) -> String {
     if x.is_finite() { format!("{x:.2}") } else if x.is_sign_positive() { "inf".into() } else { "nan".into() }
 }
 
-/// Rules §4.3 validation boundary: IS berakhir 2025-07-01, VAL mulai 2025-07-01 s.d. 2026-05-01.
+/// Rules §4.3 validation boundary (2026-11-05): IS 2025-01-01..2025-12-01, VAL 2025-12-01..2026-07-01, TEST 2026-07-01..2026-11-04.
 const FIT_FROM: &str = "2025-01-01";
-const VAL_FROM: &str = "2025-07-01";
+const VAL_FROM: &str = "2025-12-01";
 const FIT_TO: &str = VAL_FROM;
 const OOS_FROM: &str = VAL_FROM;
-const OOS_TO: &str = "2026-05-01";
+const OOS_TO: &str = "2026-07-01";
 const TREND_GRID: [f64; 7] = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0];
 const CHOP_RANGE_GRID: [f64; 7] = [45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0];
 /// Knob kedua klausa CHOP regime: ADX 1h (default 15).
@@ -772,7 +772,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             gate_v("G-11 holdout trades≥40 & E>0 & PF≥1.10 (Rules G-02: HOLDOUT≥40)", ok, m.trades >= 40, format!("{} trade (min 40), {:+.3}R / {}", m.trades, m.expectancy_r, pf_print(m.profit_factor)));
             ok
         } else {
-            println!("  [LOCKED] G-11 holdout 2026-05-01..2026-10-31 tidak dijalankan. Syarat bila dibuka sekali: E>0 dan PF≥1.10. Bukan PASS.");
+            println!("  [LOCKED] G-11 holdout/TEST 2026-07-01..2026-11-04 tidak dijalankan. Syarat bila dibuka sekali: E>0 dan PF≥1.10. Bukan PASS.");
             false
         };
         let suffix = if !g02_ok {
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn validation_boundary_matches_rules() {
-        assert_eq!(parse_ymd(VAL_FROM), parse_ymd("2025-07-01"));
+        assert_eq!(parse_ymd(VAL_FROM), parse_ymd("2025-12-01"));
         assert_eq!(FIT_TO, VAL_FROM);
         assert_eq!(OOS_FROM, VAL_FROM);
     }

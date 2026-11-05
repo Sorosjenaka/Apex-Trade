@@ -21,10 +21,10 @@ pub use stats::{dsr, monte_carlo, psr, sample_variance, sharpe_ratio, Metrics, M
 
 use apex_core::types::Ms;
 
-pub const HOLDOUT_START: &str = "2026-05-01";
-pub const HOLDOUT_END_EXCL: &str = "2026-11-01";
+pub const HOLDOUT_START: &str = "2026-07-01";
+pub const HOLDOUT_END_EXCL: &str = "2026-11-04";
 
-/// True bila [start, end) beririsan dengan holdout terkunci 2026-05-01..2026-10-31.
+/// True bila [start, end) beririsan dengan holdout/TEST terkunci 2026-07-01..2026-11-04.
 pub fn overlaps_holdout(start: Ms, end: Ms) -> bool {
     let hs = apex_core::time::parse_ymd(HOLDOUT_START).unwrap_or(i64::MAX);
     let he = apex_core::time::parse_ymd(HOLDOUT_END_EXCL).unwrap_or(i64::MAX);
@@ -51,7 +51,7 @@ pub fn holdout_guard(start: Ms, end: Ms, unlock: bool, hash: &str, ledger: &std:
         return Ok(false);
     }
     if !unlock {
-        anyhow::bail!("rentang menyentuh HOLDOUT terkunci {HOLDOUT_START}..2026-10-31. Pakai --unlock-holdout (sekali jalan per versi parameter, G-11).");
+        anyhow::bail!("rentang menyentuh HOLDOUT/TEST terkunci {HOLDOUT_START}..{HOLDOUT_END_EXCL}. Pakai --unlock-holdout (sekali jalan per versi parameter, G-11).");
     }
     if let Ok(s) = std::fs::read_to_string(ledger) {
         if s.lines().any(|l| ledger_line_has_hash(l, hash)) {
@@ -68,23 +68,23 @@ mod tests {
     #[test]
     fn holdout_lock() {
         let d = |s| apex_core::time::parse_ymd(s).unwrap();
-        assert!(!overlaps_holdout(d("2025-01-01"), d("2026-05-01")));
-        assert!(overlaps_holdout(d("2026-04-01"), d("2026-05-02")));
-        assert!(overlaps_holdout(d("2026-10-31"), d("2026-12-01")));
-        assert!(!overlaps_holdout(d("2026-11-01"), d("2026-12-01")));
+        assert!(!overlaps_holdout(d("2025-01-01"), d("2026-07-01")));
+        assert!(overlaps_holdout(d("2026-06-01"), d("2026-07-02")));
+        assert!(overlaps_holdout(d("2026-11-03"), d("2026-12-01")));
+        assert!(!overlaps_holdout(d("2026-11-04"), d("2026-12-01")));
         let p = std::env::temp_dir().join(format!("apex_hl_{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&p);
-        assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), false, "abc", &p).is_err());
-        assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).unwrap());
+        assert!(holdout_guard(d("2026-07-01"), d("2026-08-01"), false, "abc", &p).is_err());
+        assert!(holdout_guard(d("2026-07-01"), d("2026-08-01"), true, "abc", &p).unwrap());
         std::fs::write(
             &p,
             "{\"param_hash\":\"abcdef1234567890\"}\n{\"note\":\"abc\",\"param_hash\":\"other\"}\nnot-json abc\n",
         )
         .unwrap();
-        assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).unwrap());
+        assert!(holdout_guard(d("2026-07-01"), d("2026-08-01"), true, "abc", &p).unwrap());
         std::fs::write(&p, "{\"param_hash\":\"abc\"}\n").unwrap();
-        assert!(holdout_guard(d("2026-05-01"), d("2026-06-01"), true, "abc", &p).is_err());
-        assert!(!holdout_guard(d("2025-05-01"), d("2025-06-01"), false, "abc", &p).unwrap());
+        assert!(holdout_guard(d("2026-07-01"), d("2026-08-01"), true, "abc", &p).is_err());
+        assert!(!holdout_guard(d("2025-05-01"), d("2026-07-01"), false, "abc", &p).unwrap());
         let _ = std::fs::remove_file(&p);
     }
 }

@@ -1046,9 +1046,9 @@ mod tests {
     fn knn_training_never_crosses_holdout() {
         let day = |x| apex_core::time::parse_ymd(x).unwrap();
         let first = Some(day("2025-01-01"));
-        assert_eq!(knn_training_start(first, day("2026-05-01")).unwrap(), first);
-        assert!(knn_training_start(first, day("2026-05-02")).is_err());
-        assert!(knn_training_start(first, day("2026-11-01")).is_err());
+        assert_eq!(knn_training_start(first, day("2026-07-01")).unwrap(), first);
+        assert!(knn_training_start(first, day("2026-07-02")).is_err());
+        assert!(knn_training_start(first, day("2026-11-04")).is_err());
     }
 
     #[test]

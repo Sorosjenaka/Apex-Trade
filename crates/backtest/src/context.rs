@@ -38,6 +38,8 @@ struct AltFeat {
 
 struct CachedReaderFeat {
     tf: TrendFeatures,
+    btc_ema50_1h: Vec<f64>,
+    btc_er20_1h: Vec<f64>,
     alt: Vec<AltFeat>,
 }
 
@@ -69,6 +71,8 @@ fn cached_reader_feat(btc_m15: &[Bar], btc_h1: &[Bar], alts: &[AltInput]) -> Arc
         }
     }
     let tf = TrendFeatures::compute(btc_h1, btc_m15);
+    let btc_ema50_1h = ind::ema(&tf.close_1h, 50);
+    let btc_er20_1h = ind::efficiency_ratio(&tf.close_1h, 20);
     let alt: Vec<AltFeat> = alts
         .iter()
         .map(|a| {
@@ -76,7 +80,7 @@ fn cached_reader_feat(btc_m15: &[Bar], btc_h1: &[Bar], alts: &[AltInput]) -> Arc
             AltFeat { ot: a.h1.iter().map(|b| b.open_time).collect(), ema50: ind::ema(&c, 50), er20: ind::efficiency_ratio(&c, 20), close: c }
         })
         .collect();
-    let built = Arc::new(CachedReaderFeat { tf, alt });
+    let built = Arc::new(CachedReaderFeat { tf, btc_ema50_1h, btc_er20_1h, alt });
     if let Ok(mut guard) = lock.lock() {
         if guard.len() >= 16 {
             guard.clear();
@@ -116,8 +120,25 @@ impl RegimeTimeline {
                     br.push((a.close[i], a.ema50[i], a.er20[i]));
                 }
             }
-            let alt_med = if alt_chg.len() >= 3 { Some(ind::percentile(&alt_chg, 50.0)) } else { None };
-            let breadth = apex_market_reader::readers::breadth(&br);
+            let min_alt = 3.min(alt.len().max(1));
+            let alt_med = if alt_chg.len() >= min_alt { Some(ind::percentile(&alt_chg, 50.0)) } else { None };
+            let breadth = if alt.len() >= 5 {
+                apex_market_reader::readers::breadth(&br)
+            } else {
+                if let Some(bi) = i1 {
+                    br.push((tf.close_1h[bi], feat.btc_ema50_1h[bi], feat.btc_er20_1h[bi]));
+                }
+                let ok: Vec<_> = br.iter().filter(|(c, e, r)| c.is_finite() && e.is_finite() && r.is_finite()).collect();
+                let min_br = 5.min(alt.len() + 1);
+                if ok.len() >= min_br && !ok.is_empty() {
+                    let n = ok.len() as f64;
+                    let up = ok.iter().filter(|(c, e, _)| c > e).count() as f64;
+                    let tr = ok.iter().filter(|(_, _, r)| *r >= 0.30).count() as f64;
+                    Some((100.0 * up / n, 100.0 * tr / n))
+                } else {
+                    None
+                }
+            };
             let data_ok = i1.is_some() && i15.is_some() && btc_chg.is_some() && dom_chg.is_some() && alt_med.is_some() && breadth.is_some()
                 && i1.map(|i| tf.adx_1h[i].is_finite() && tf.atr_pctile_1h[i].is_finite()).unwrap_or(false)
                 && i15.map(|i| tf.er_15m[i].is_finite() && as_of - (tf.open_time_15m[i] + Tf::M15.ms()) <= Tf::M15.ms()).unwrap_or(false);

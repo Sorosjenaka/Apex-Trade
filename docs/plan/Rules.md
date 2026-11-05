@@ -80,9 +80,9 @@ Urutan cek tetap (gagal pertama → SKIP): ARM → regime → SL range → max p
 
 | Segmen | Periode | Pemakaian |
 |---|---|---|
-| IS (pengembangan) | 2023-01-01 – 2025-06-30 | pemilihan parameter, maksimal 60 trial/strategi |
-| VAL (validasi) | 2025-07-01 – 2026-04-30 | evaluasi kandidat terpilih; walk-forward ikut memakai IS+VAL |
-| HOLDOUT | 2026-05-01 – 2026-10-31 | **dikunci**, hash file dicatat di T-2.1, dijalankan **sekali** per strategi final |
+| IS (pengembangan) | 2025-01-01 – 2025-12-01 | pemilihan parameter (tuning boleh di sini), maksimal 20 kombinasi untuk riset BTCUSDT+ETHUSDT |
+| VAL (validasi) | 2025-12-01 – 2026-07-01 | evaluasi & pemilihan kandidat terpilih; walk-forward ikut memakai IS+VAL |
+| TEST / HOLDOUT | 2026-07-01 – 2026-11-04 | **dikunci** (holdout lama 2026-05-01..2026-10-31 dibuka atas keputusan user 2026-11-05), dijalankan **sekali** untuk kandidat final tanpa tuning ulang |
 | Forward | testnet ≥ 14 hari + shadow mainnet ≥ 7 hari | paritas eksekusi |
 
 Simbol yang listing setelah awal IS hanya dipakai sejak listing + 30 hari. ETH 2025–2026 dilaporkan terpisah karena terkontaminasi riset apex (A-12).

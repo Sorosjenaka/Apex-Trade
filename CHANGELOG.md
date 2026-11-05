@@ -25,3 +25,12 @@ Rilis awal (ARM=false, mode=paper, semua strategi NO-GO).
 - G-09 otomatis pada grid CHOP (regime `trend_share_min` dan screener `chop_range`). Plateau = run yang blok FIT-nya di bawah 87% dan PF OOS-nya tidak turun; ambang yang dilaporkan adalah median run, bukan titik terbaik.
 - Sweep CHOP diperluas: knob regime `adx_max` dan `er_max` ikut di-grid, plus satu run verifikasi kombinasi ketiga knob memakai median plateau masing-masing.
 - G-11 otomatis hanya bila `--unlock-holdout` dan jendela menyentuh 2026-05-01..2026-10-31. Tanpa itu statusnya LOCKED, bukan PASS. Holdout tidak dibuka oleh sweep.
+
+## 0.1.2 — 2026-11-05 (branch `research/btceth`)
+### Keputusan User (Holdout & Split Baru)
+- **Holdout lama `2026-05-01..2026-10-31` DIBUKA** atas keputusan eksplisit user dan dimasukkan ke dalam data riset `2025-01-01 → 2026-11-04`.
+- **Split tetap baru** di `docs/plan/Rules.md` (§4.3) dan gate runner (`crates/backtest/src/lib.rs`, `apps/apex/src/bt.rs`):
+  - **IS**: `2025-01-01..2025-12-01` (tuning parameter diperbolehkan di sini, maks 20 kombinasi untuk S1_TFP).
+  - **VAL**: `2025-12-01..2026-07-01` (pemilihan kandidat berdasarkan E VAL dan DD).
+  - **TEST (Holdout baru terkunci)**: `2026-07-01..2026-11-04` (`HOLDOUT_START = "2026-07-01"`, `HOLDOUT_END_EXCL = "2026-11-04"`), hanya boleh dijalankan **SATU KALI** untuk kandidat final tanpa tuning ulang.
+- Fokus universe: `["BTCUSDT", "ETHUSDT"]` dengan seluruh Golden Rules risiko tetap (`$1` risk, SL `2–4%`, `25x` cross, maks 2 posisi, stop harian 6 SL / `-$6`, cooldown 1 jam setelah SL, tidak trade saat sideways, `arm=false`, `mode="paper"`).
