@@ -66,9 +66,19 @@ Aturan IS/VAL proyek (`Rules.md` §4.3) menetapkan VAL mulai 2025-07-01 UTC. Val
 
 Audit fetch menemukan endpoint funding Binance sebelumnya menerima `endTime` inklusif tepat di awal holdout (2026-05-01 00:00 UTC). Fetch yang sedang berjalan dihentikan setelah beberapa simbol; permintaan funding tersebut mungkin sudah mengunduh satu titik di batas itu. Tidak ada backtest holdout dan simulasi pra-holdout menyaring funding sebelum waktu akhir. Kode fetch diperbaiki agar meminta `end - 1 ms` dan memfilter ulang hasil; `cargo test -p apex-data` lulus 6/6. Fetch diulang ke direktori baru.
 
-### Opsi a — universe (persiapan, belum ada hasil backtest)
+### Opsi a — universe 40 pair (replay selesai; belum layak validasi penuh)
 
-Ranking memakai jumlah quote volume harian pada Desember 2024, sebelum periode uji. Metadata exchange dan allowlist diambil dari snapshot saat ini; hasil rentan survivorship bias dan bukan universe point-in-time lengkap. Dari 239 kontrak kandidat, 239 memiliki 31 bar harian lengkap dan 40 teratas dipilih. BTC hanya konteks; ETH termasuk universe. Konfigurasi riset terpisah dengan aturan risk dan volume gate tetap; fetch data publik sedang berjalan. Tidak ada angka performa atau rekomendasi kelayakan sebelum replay selesai. Opsi b–d belum diuji.
+Ranking memakai jumlah quote volume harian pada Desember 2024, sebelum periode uji. Metadata exchange dan allowlist diambil dari snapshot saat ini; hasil rentan survivorship bias dan bukan universe point-in-time lengkap. Dari 239 kontrak kandidat, 239 memiliki 31 bar harian lengkap dan 40 teratas dipilih. BTC hanya konteks; ETH termasuk universe. Pair terakhir, COWUSDT, memiliki rata-rata volume Desember sekitar $280 juta/hari. Konfigurasi riset terpisah dapat dimatikan dengan kembali ke konfigurasi default, tanpa mengubah risk rule atau volume gate. Terdapat 42 seri termasuk BTC dan BTCDOM: pemeriksaan timestamp mendapati seluruh candle 15m/1h lengkap, funding terurut dalam rentang dan tanpa jeda lebih dari 8 jam + 1 menit; ini bukan verifikasi penuh checksum atau jadwal funding historis. Data dan pemilihan memiliki bias snapshot filter saat ini. Perluasan universe juga mengubah breadth yang dipakai Reader.
+
+| Run terpisah | Sinyal | Trade | IS | VAL | WR | PF | E[R] | E VAL | Max DD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S1 | 1.032 | 65 | 29 | 36 | 43,08% | 1,425 | +0,246 | +0,043 | $8,54 / 8,73R |
+| S3 | 48 | 6 | 3 | 3 | 33,33% | 0,976 | −0,035 | −0,030 | $2,00 / 2,09R |
+| Gabungan S1+S3 | 1.080 | 68 | 30 | 38 | 42,65% | 1,400 | +0,234 | +0,064 | $7,65 / 7,85R |
+
+S1 menambah 19 trade VAL dari baseline (17 ke 36), tetapi masih kurang dari 60 dan E VAL turun dari +0,195 menjadi +0,043R, di bawah G-03 +0,10R. IS juga masih 29, di bawah 100. S3 E VAL negatif dengan hanya 3 trade; jangan pilih varian itu sebagai kandidat. S1: beberapa simbol masing-masing maksimum 4/65 trade (6,15%); Mei 2025 9/65 (13,85%). DOGE menghasilkan $4,68 dari laba neto $15,62 (30,0%); Mei 2025 $11,05 dari $15,62 (70,7%), melampaui batas G-10 bulan 35% jika dihitung dengan definisi neto proyek. ETH hanya 1 trade, +$1,77; sampel tidak bermakna. Konsentrasi lengkap setiap simbol/bulan dan statistiknya di `research/results/universe.json`, baseline di `research/results/baseline.json`.
+
+Rekomendasi sementara: **belum layak validasi penuh atau trading**. Hasil VAL pernah terpapar riset sebelumnya dan pilihan universe memakai snapshot kontrak kini; tidak independen. Seluruh gate tetap NO-GO. Hash backtest yang ada tidak mencakup universe dan data: baseline dan universe menghasilkan hash parameter sama, sehingga direktori dan manifest di atas harus dipakai untuk membedakannya. Ledger per direktori juga belum menjamin hitungan DSR global. Opsi b–d belum diuji.
 
 ### Baseline untuk perbandingan (replay Reader, universe default, 2025-01-01–2026-05-01 eksklusif)
 

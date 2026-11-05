@@ -42,7 +42,7 @@ def summarize(report):
         by_symbol[trade["symbol"]].append(trade)
         month = datetime.datetime.fromtimestamp(trade["exit_ms"] / 1000, datetime.timezone.utc).strftime("%Y-%m")
         by_month[month].append(trade)
-    groups = lambda g: {k: {"trades": len(v), "trade_share": len(v) / len(all_trades), "net_usd": sum(t["pnl_net"] for t in v)} for k, v in sorted(g.items())}
+    groups = lambda g: {k: {"trades": len(v), "trade_share": len(v) / len(all_trades), "net_usd": sum(t["pnl_net"] for t in v), "metrics": metrics(v)} for k, v in sorted(g.items())}
     return {"signals": report["signals"], "all": metrics(all_trades), "is": metrics(is_trades), "val": metrics(val_trades), "by_symbol": groups(by_symbol), "by_month": groups(by_month), "data_gaps": report["data_gaps"], "excluded_cross_boundary_or_forced": len(report["trades"]) - len(is_trades) - len(val_trades), "note": "VAL may be research-contaminated; PF null means no losses or no trades, not zero"}
 
 

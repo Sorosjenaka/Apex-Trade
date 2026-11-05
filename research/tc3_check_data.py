@@ -11,6 +11,8 @@ market = pathlib.Path(sys.argv[1])
 rank = json.loads((root / "tc3_universe_2025.json").read_text(encoding="utf-8"))
 symbols = ["BTCUSDT", "BTCDOMUSDT"] + [x["symbol"] for x in rank["results"][:40]]
 issues = []
+# Funding timestamps can carry millisecond jitter around their scheduled time.
+max_funding_gap = 28_800_000 + 60_000
 for symbol in symbols:
     for tf, step in (("15m", 900_000), ("1h", 3_600_000)):
         path = market / "klines" / f"{symbol}_{tf}.csv"
@@ -26,8 +28,8 @@ for symbol in symbols:
         try:
             with (market / "funding" / f"{symbol}.csv").open(encoding="utf-8", newline="") as handle:
                 times = [int(row["time"]) for row in csv.DictReader(handle)]
-            if not times or any(not START <= t < END for t in times) or any(a >= b for a, b in zip(times, times[1:])):
-                issues.append(f"{symbol} funding: missing, duplicate, unsorted or out-of-range")
+            if not times or any(not START <= t < END for t in times) or any(a >= b or b - a > max_funding_gap for a, b in zip(times, times[1:])) or times[0] - START > max_funding_gap or END - times[-1] > max_funding_gap:
+                issues.append(f"{symbol} funding: missing, duplicate, unsorted, out-of-range or gap > 8h + 1m")
         except (OSError, ValueError, KeyError) as error:
             issues.append(f"{symbol} funding: {error}")
 print(json.dumps({"symbols": len(symbols), "issues": issues}, indent=2))

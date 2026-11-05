@@ -5,6 +5,7 @@ the selection must never be described as a point-in-time complete universe.
 """
 import concurrent.futures
 import json
+import math
 import pathlib
 import sys
 import threading
@@ -40,7 +41,10 @@ def rank_one(symbol):
     rows = get("/fapi/v1/klines", {"symbol": symbol, "interval": "1d", "startTime": START, "endTime": END - 1, "limit": 31})
     if len(rows) != 31 or any(int(row[0]) != START + i * 86400000 for i, row in enumerate(rows)):
         return None
-    return {"symbol": symbol, "dec_2024_quote_volume": sum(float(row[7]) for row in rows), "days": len(rows)}
+    volumes = [float(row[7]) for row in rows]
+    if any(not math.isfinite(v) or v < 0 for v in volumes) or sum(volumes) <= 0:
+        raise ValueError("invalid historical quote volume")
+    return {"symbol": symbol, "dec_2024_quote_volume": sum(volumes), "days": len(rows)}
 
 
 def main():
