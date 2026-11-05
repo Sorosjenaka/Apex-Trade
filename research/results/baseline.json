@@ -1,0 +1,371 @@
+{
+  "S1_TFP": {
+    "signals": {
+      "S1_TFP": 297
+    },
+    "all": {
+      "trades": 29,
+      "win_rate": 0.4827586206896552,
+      "profit_factor": 1.776461175812865,
+      "expectancy_r": 0.4018250688335857,
+      "max_dd_usd": 2.991533878264505,
+      "max_dd_r": 3.0113126891531614
+    },
+    "is": {
+      "trades": 12,
+      "win_rate": 0.5833333333333334,
+      "profit_factor": 2.6903690498025807,
+      "expectancy_r": 0.6947694726232762,
+      "max_dd_usd": 2.0879764882733713,
+      "max_dd_r": 2.1149045004737035
+    },
+    "val": {
+      "trades": 17,
+      "win_rate": 0.4117647058823529,
+      "profit_factor": 1.321079629599408,
+      "expectancy_r": 0.19504078380556883,
+      "max_dd_usd": 2.991533878264505,
+      "max_dd_r": 3.0113126891531596
+    },
+    "by_symbol": {
+      "1000PEPEUSDT": {
+        "trades": 4,
+        "trade_share": 0.13793103448275862,
+        "net_usd": -3.9980179710502526
+      },
+      "DOGEUSDT": {
+        "trades": 5,
+        "trade_share": 0.1724137931034483,
+        "net_usd": 6.553262600456906
+      },
+      "ENAUSDT": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 3.8146389759040003
+      },
+      "ETHUSDT": {
+        "trades": 1,
+        "trade_share": 0.034482758620689655,
+        "net_usd": 1.7709388848395966
+      },
+      "HYPEUSDT": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": -0.11713215092340035
+      },
+      "LINKUSDT": {
+        "trades": 1,
+        "trade_share": 0.034482758620689655,
+        "net_usd": -0.99761806892
+      },
+      "NEARUSDT": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 0.8941466051000061
+      },
+      "SOLUSDT": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": -2.9310974973479973
+      },
+      "SUIUSDT": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 3.8234142110235028
+      },
+      "WLDUSDT": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": -0.06941513288999779
+      },
+      "XRPUSDT": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": 2.7932001016487957
+      }
+    },
+    "by_month": {
+      "2025-02": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": -0.11992337283337362
+      },
+      "2025-03": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": -1.9680531154399978
+      },
+      "2025-04": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": 5.7104514510329025
+      },
+      "2025-05": {
+        "trades": 3,
+        "trade_share": 0.10344827586206896,
+        "net_usd": 2.8212628829120097
+      },
+      "2025-06": {
+        "trades": 1,
+        "trade_share": 0.034482758620689655,
+        "net_usd": 1.9086235428179996
+      },
+      "2025-07": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 0.9212807874180003
+      },
+      "2025-08": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 0.778065168884396
+      },
+      "2025-09": {
+        "trades": 1,
+        "trade_share": 0.034482758620689655,
+        "net_usd": -0.9465132767999974
+      },
+      "2025-10": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": 0.8786016003110992
+      },
+      "2025-11": {
+        "trades": 4,
+        "trade_share": 0.13793103448275862,
+        "net_usd": 1.7693041943065193
+      },
+      "2026-01": {
+        "trades": 4,
+        "trade_share": 0.13793103448275862,
+        "net_usd": 1.779020822261606
+      },
+      "2026-03": {
+        "trades": 2,
+        "trade_share": 0.06896551724137931,
+        "net_usd": -1.9958001270300048
+      }
+    },
+    "data_gaps": 0,
+    "excluded_cross_boundary_or_forced": 0,
+    "note": "VAL may be research-contaminated; PF null means no losses or no trades, not zero"
+  },
+  "S1_TFP+S3_SBR": {
+    "signals": {
+      "S1_TFP": 297,
+      "S3_SBR": 11
+    },
+    "all": {
+      "trades": 31,
+      "win_rate": 0.45161290322580644,
+      "profit_factor": 1.5662294972822322,
+      "expectancy_r": 0.31149316550168465,
+      "max_dd_usd": 4.985833141740008,
+      "max_dd_r": 5.00795155477492
+    },
+    "is": {
+      "trades": 12,
+      "win_rate": 0.5833333333333334,
+      "profit_factor": 2.6903690498025807,
+      "expectancy_r": 0.6947694726232762,
+      "max_dd_usd": 2.0879764882733713,
+      "max_dd_r": 2.1149045004737035
+    },
+    "val": {
+      "trades": 19,
+      "win_rate": 0.3684210526315789,
+      "profit_factor": 1.0998814833283015,
+      "expectancy_r": 0.06942391889857422,
+      "max_dd_usd": 4.985833141740008,
+      "max_dd_r": 5.0079515547749205
+    },
+    "by_symbol": {
+      "1000PEPEUSDT": {
+        "trades": 4,
+        "trade_share": 0.12903225806451613,
+        "net_usd": -3.9980179710502526
+      },
+      "DOGEUSDT": {
+        "trades": 5,
+        "trade_share": 0.16129032258064516,
+        "net_usd": 6.553262600456906
+      },
+      "ENAUSDT": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 3.8146389759040003
+      },
+      "ETHUSDT": {
+        "trades": 1,
+        "trade_share": 0.03225806451612903,
+        "net_usd": 1.7709388848395966
+      },
+      "HYPEUSDT": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": -0.11713215092340035
+      },
+      "LINKUSDT": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": -1.9938608466194045
+      },
+      "NEARUSDT": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 0.8941466051000061
+      },
+      "SOLUSDT": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": -2.9310974973479973
+      },
+      "SUIUSDT": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 3.8234142110235028
+      },
+      "WLDUSDT": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": -0.06941513288999779
+      },
+      "XRPUSDT": {
+        "trades": 4,
+        "trade_share": 0.12903225806451613,
+        "net_usd": 1.7951436158726968
+      }
+    },
+    "by_month": {
+      "2025-02": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": -0.11992337283337362
+      },
+      "2025-03": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": -1.9680531154399978
+      },
+      "2025-04": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": 5.7104514510329025
+      },
+      "2025-05": {
+        "trades": 3,
+        "trade_share": 0.0967741935483871,
+        "net_usd": 2.8212628829120097
+      },
+      "2025-06": {
+        "trades": 1,
+        "trade_share": 0.03225806451612903,
+        "net_usd": 1.9086235428179996
+      },
+      "2025-07": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 0.9212807874180003
+      },
+      "2025-08": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 0.778065168884396
+      },
+      "2025-09": {
+        "trades": 1,
+        "trade_share": 0.03225806451612903,
+        "net_usd": -0.9465132767999974
+      },
+      "2025-10": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": 0.8786016003110992
+      },
+      "2025-11": {
+        "trades": 4,
+        "trade_share": 0.12903225806451613,
+        "net_usd": 1.7693041943065193
+      },
+      "2026-01": {
+        "trades": 4,
+        "trade_share": 0.12903225806451613,
+        "net_usd": 1.779020822261606
+      },
+      "2026-02": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": -1.9942992634755035
+      },
+      "2026-03": {
+        "trades": 2,
+        "trade_share": 0.06451612903225806,
+        "net_usd": -1.9958001270300048
+      }
+    },
+    "data_gaps": 0,
+    "excluded_cross_boundary_or_forced": 0,
+    "note": "VAL may be research-contaminated; PF null means no losses or no trades, not zero"
+  },
+  "S3_SBR": {
+    "signals": {
+      "S3_SBR": 11
+    },
+    "all": {
+      "trades": 3,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "expectancy_r": -0.998879621873919,
+      "max_dd_usd": 2.9921486896515,
+      "max_dd_r": 2.996638865621757
+    },
+    "is": {
+      "trades": 1,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "expectancy_r": -0.9999999999999966,
+      "max_dd_usd": 0.9978494261759966,
+      "max_dd_r": 0.9999999999999966
+    },
+    "val": {
+      "trades": 2,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "expectancy_r": -0.9983194328108802,
+      "max_dd_usd": 1.9942992634755035,
+      "max_dd_r": 1.9966388656217604
+    },
+    "by_symbol": {
+      "LINKUSDT": {
+        "trades": 1,
+        "trade_share": 0.3333333333333333,
+        "net_usd": -0.9962427776994045
+      },
+      "SUIUSDT": {
+        "trades": 1,
+        "trade_share": 0.3333333333333333,
+        "net_usd": -0.9978494261759966
+      },
+      "XRPUSDT": {
+        "trades": 1,
+        "trade_share": 0.3333333333333333,
+        "net_usd": -0.9980564857760991
+      }
+    },
+    "by_month": {
+      "2025-04": {
+        "trades": 1,
+        "trade_share": 0.3333333333333333,
+        "net_usd": -0.9978494261759966
+      },
+      "2026-02": {
+        "trades": 2,
+        "trade_share": 0.6666666666666666,
+        "net_usd": -1.9942992634755035
+      }
+    },
+    "data_gaps": 0,
+    "excluded_cross_boundary_or_forced": 0,
+    "note": "VAL may be research-contaminated; PF null means no losses or no trades, not zero"
+  }
+}
