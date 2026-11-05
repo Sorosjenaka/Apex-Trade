@@ -8,6 +8,9 @@ use apex_market_reader::aggregate::ReaderSnapshot;
 use apex_market_reader::readers::{chg24, dir_from_chg, last_closed, shock_proxy_15m, CrowdFlags, TrendFeatures};
 use apex_market_reader::{ChopThresholds, RegimeDecision, RegimeMachine, RegimeState, UniverseScope};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegimeMode {
@@ -33,17 +36,62 @@ struct AltFeat {
     er20: Vec<f64>,
 }
 
+struct CachedReaderFeat {
+    tf: TrendFeatures,
+    alt: Vec<AltFeat>,
+}
+
+fn hash_bars_into(bars: &[Bar], h: &mut impl Hasher) {
+    bars.len().hash(h);
+    for b in bars {
+        b.open_time.hash(h);
+        b.open.to_bits().hash(h);
+        b.high.to_bits().hash(h);
+        b.low.to_bits().hash(h);
+        b.close.to_bits().hash(h);
+    }
+}
+
+fn cached_reader_feat(btc_m15: &[Bar], btc_h1: &[Bar], alts: &[AltInput]) -> Arc<CachedReaderFeat> {
+    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<CachedReaderFeat>>>> = OnceLock::new();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    hash_bars_into(btc_m15, &mut h);
+    hash_bars_into(btc_h1, &mut h);
+    alts.len().hash(&mut h);
+    for a in alts {
+        hash_bars_into(a.h1, &mut h);
+    }
+    let key = h.finish();
+    let lock = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = lock.lock() {
+        if let Some(found) = guard.get(&key) {
+            return Arc::clone(found);
+        }
+    }
+    let tf = TrendFeatures::compute(btc_h1, btc_m15);
+    let alt: Vec<AltFeat> = alts
+        .iter()
+        .map(|a| {
+            let c = ind::closes(a.h1);
+            AltFeat { ot: a.h1.iter().map(|b| b.open_time).collect(), ema50: ind::ema(&c, 50), er20: ind::efficiency_ratio(&c, 20), close: c }
+        })
+        .collect();
+    let built = Arc::new(CachedReaderFeat { tf, alt });
+    if let Ok(mut guard) = lock.lock() {
+        if guard.len() >= 16 {
+            guard.clear();
+        }
+        guard.insert(key, Arc::clone(&built));
+    }
+    built
+}
+
 impl RegimeTimeline {
     /// `close_times`: waktu close bar 15m (as_of) berurutan. `cap_on_proxy`: terapkan aturan TV-06 (max_pos=1) karena sumber cadangan.
     pub fn build(btc_m15: &[Bar], btc_h1: &[Bar], dom_h1: Option<&[Bar]>, alts: &[AltInput], close_times: &[Ms], cap_on_proxy: bool, chop: ChopThresholds) -> RegimeTimeline {
-        let tf = TrendFeatures::compute(btc_h1, btc_m15);
-        let alt: Vec<AltFeat> = alts
-            .iter()
-            .map(|a| {
-                let c = ind::closes(a.h1);
-                AltFeat { ot: a.h1.iter().map(|b| b.open_time).collect(), ema50: ind::ema(&c, 50), er20: ind::efficiency_ratio(&c, 20), close: c }
-            })
-            .collect();
+        let feat = cached_reader_feat(btc_m15, btc_h1, alts);
+        let tf = &feat.tf;
+        let alt = &feat.alt;
         let dom_ot: Vec<Ms> = dom_h1.map(|d| d.iter().map(|b| b.open_time).collect()).unwrap_or_default();
         let dom_c: Vec<f64> = dom_h1.map(ind::closes).unwrap_or_default();
         let btc15_ot: Vec<Ms> = btc_m15.iter().map(|b| b.open_time).collect();
@@ -57,7 +105,7 @@ impl RegimeTimeline {
             let dom_chg = last_closed(&dom_ot, Tf::H1, as_of).and_then(|i| if as_of - (dom_ot[i] + Tf::H1.ms()) <= 2 * Tf::H1.ms() { chg24(&dom_c, i) } else { None });
             let mut alt_chg = Vec::new();
             let mut br = Vec::new();
-            for a in &alt {
+            for a in alt {
                 if let Some(i) = last_closed(&a.ot, Tf::H1, as_of) {
                     if as_of - (a.ot[i] + Tf::H1.ms()) > 2 * Tf::H1.ms() {
                         continue; // simbol stale/belum listing

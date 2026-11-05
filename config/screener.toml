@@ -1,3 +1,8 @@
+[chop]
+adx_max = 15.0
+er_max = 0.25
+trend_share_min = 15.0
+
 [regime]
 adx_trend = 25.0
 adx_strong = 30.0

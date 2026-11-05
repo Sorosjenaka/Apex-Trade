@@ -72,6 +72,14 @@ pub fn s2_lsr(v: &View, p: &StrategyParams) -> Option<RawSignal> {
     }
     // sweep di s ∈ [t−reclaim_bars+1, t], reclaim pertama di t.
     for s in (t + 1 - p.s2_reclaim_bars.min(t))..=t {
+        let trap = (s..=(s + 1).min(t)).any(|k| {
+            let b = &v.m15[k];
+            let p95 = v.f15.p95_absdelta[k];
+            (fin(p95) && v.f15.delta[k] <= -p95 && b.close_pos() >= 0.6) || (b.close > b.open && v.f15.delta[k] < 0.0)
+        });
+        if !trap {
+            continue;
+        }
         let pools = unswept(v, false, s, p.s2_pool_age);
         let Some(&(_, pool)) = pools.iter().filter(|(_, px)| v.m15[s].low < *px).max_by(|a, b| a.1.total_cmp(&b.1)) else { continue };
         if v.m15[t].close < pool || (s..t).any(|k| v.m15[k].close >= pool) {

@@ -188,6 +188,39 @@ pub fn select_plateau(points: &[SweepPoint], baseline_threshold: f64, baseline_o
     PlateauChoice { admissible, run, adopted_threshold }
 }
 
+/// Refit satu knob CHOP hanya dari hasil evaluasi data train fold (`points` berisi metrik train saja).
+/// Memilih median plateau pada train; bila sampel train tipis dan plateau penuh belum terbentuk,
+/// jatuh ke median titik train yang blok < 87% dan E_train > 0 (PF tidak turun dari baseline train),
+/// atau kembali ke `baseline_threshold`.
+pub fn refit_threshold_from_train(points: &[SweepPoint], baseline_threshold: f64) -> f64 {
+    if points.is_empty() {
+        return baseline_threshold;
+    }
+    let base_pf = points
+        .iter()
+        .min_by(|a, b| (a.threshold - baseline_threshold).abs().total_cmp(&(b.threshold - baseline_threshold)))
+        .map(|p| p.oos_pf)
+        .unwrap_or(0.0);
+    let choice = select_plateau(points, baseline_threshold, base_pf);
+    if let Some(th) = choice.adopted_threshold {
+        return th;
+    }
+    let adm: Vec<f64> = points
+        .iter()
+        .filter(|p| p.fit_block < 0.87 && p.fit_e > 0.0 && pf_not_lower(p.oos_pf, base_pf))
+        .map(|p| p.threshold)
+        .collect();
+    if let Some(th) = adopt_threshold(&adm, baseline_threshold) {
+        return th;
+    }
+    let pos: Vec<f64> = points
+        .iter()
+        .filter(|p| p.fit_block < 0.87 && p.fit_e > 0.0)
+        .map(|p| p.threshold)
+        .collect();
+    adopt_threshold(&pos, baseline_threshold).unwrap_or(baseline_threshold)
+}
+
 pub fn g02_pass(trades: usize, min_trades: usize) -> bool {
     trades >= min_trades
 }
@@ -228,12 +261,13 @@ pub fn trades_per_year(n_trades: usize, span_ms: i64) -> usize {
     ((n_trades as f64) / years).round().max(1.0) as usize
 }
 
-/// Baris ledger yang benar-benar memuat strategi ini. Baris strategi lain tidak dihitung.
+/// Baris ledger yang memuat strategi ini DAN berisi >= 10 trade. Trial <10 trade dibuang
+/// dari hitungan DSR (definisi trial DSR, 2026-11-05) — SR small-sample-nya tidak bermakna.
 pub fn count_strategy_trials(ledger: &str, strategy: &str) -> usize {
-    ledger.lines().filter(|line| line_has_strategy(line, strategy)).count()
+    ledger.lines().filter(|line| line_is_trial(line, strategy)).count()
 }
 
-fn line_has_strategy(line: &str, strategy: &str) -> bool {
+fn line_is_trial(line: &str, strategy: &str) -> bool {
     let line = line.trim();
     if line.is_empty() {
         return false;
@@ -241,10 +275,21 @@ fn line_has_strategy(line: &str, strategy: &str) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return false;
     };
-    v.get("strategies").and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|s| s.as_str() == Some(strategy)))
+    let has_strat = v.get("strategies").and_then(|x| x.as_array()).is_some_and(|a| a.iter().any(|s| s.as_str() == Some(strategy)));
+    if !has_strat {
+        return false;
+    }
+    let trades = v
+        .get("strategy_trades")
+        .and_then(|m| m.get(strategy))
+        .and_then(|x| x.as_u64())
+        .or_else(|| v.get("trades").and_then(|x| x.as_u64()))
+        .unwrap_or(0);
+    trades >= 10
 }
 
-/// N = trial tercatat untuk strategi ini (ledger lama + run sesi ini, tanpa dobel) + 40 trial `apex_legacy`.
+/// N = trial valid (>= 10 trade) untuk strategi ini (ledger lama + run sesi ini, tanpa dobel)
+/// + 40 trial `apex_legacy`. Trial <10 trade dibuang (definisi trial DSR, 2026-11-05).
 pub fn honest_n_trials(prior_ledger: usize, session_runs: usize) -> usize {
     prior_ledger.saturating_add(session_runs).saturating_add(40)
 }
@@ -320,6 +365,7 @@ mod tests {
         let c = select_plateau(&points, 20.0, 1.25);
         assert_eq!(c.admissible, vec![0, 1, 2]);
         assert_eq!(c.adopted_threshold, Some(15.0));
+        assert_eq!(refit_threshold_from_train(&points, 20.0), 15.0);
     }
 
     #[test]
@@ -334,7 +380,8 @@ mod tests {
         assert_eq!(trades_per_year(160, (365.25 * 24.0 * 3_600_000.0) as i64), 160);
         let year = (365.25 * 24.0 * 3_600_000.0) as i64;
         assert_eq!(trades_per_year(100, year * 2), 50);
-        let ledger = "{\"strategies\":[\"S1\"]}\n{\"strategies\":[\"S2\",\"S3\"]}\nnot json\n{\"strategies\":[\"S1\",\"S5\"]}\n";
+        let ledger = "{\"strategies\":[\"S1\"],\"trades\":25}\n{\"strategies\":[\"S2\",\"S3\"],\"trades\":12}\nnot json\n{\"strategies\":[\"S1\",\"S5\"],\"trades\":40}\n{\"strategies\":[\"S1\"],\"trades\":3}\n{\"strategies\":[\"S1\"]}\n";
+        // trial <10 trade (trades=3) dan tanpa field trades dibuang dari hitungan DSR.
         assert_eq!(count_strategy_trials(ledger, "S1"), 2);
         assert_eq!(count_strategy_trials(ledger, "S2"), 1);
         assert_eq!(count_strategy_trials(ledger, "S4"), 0);

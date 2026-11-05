@@ -23,6 +23,7 @@ pub struct StrategiesFile {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScreenerFile {
+    pub chop: apex_market_reader::ChopThresholds,
     pub regime: ScreenerConfig,
     pub volume_gate: VolumeGateConfig,
 }

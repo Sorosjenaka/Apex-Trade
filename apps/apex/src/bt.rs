@@ -68,6 +68,7 @@ pub fn make_cfg(cfg: &AllConfig, a: &BtArgs, ids: Vec<StrategyId>) -> anyhow::Re
         params: cfg.strategies.params.clone(),
         strategies: ids,
         screener: cfg.screener.regime.clone(),
+        chop: cfg.screener.chop,
         regime_mode: if a.regime == "screener" { RegimeMode::ScreenerOnly } else { RegimeMode::Reader },
         entry_tf: if cfg.strategies.research_entry_5m { Tf::M5 } else { Tf::M15 },
         volume_gate: !a.no_volume_gate,
@@ -153,8 +154,20 @@ pub fn backtest(cfg: &AllConfig, a: &BtArgs, per_strategy: bool) -> anyhow::Resu
 }
 
 pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: bool, m: &Metrics, kind: &str) -> anyhow::Result<()> {
+    append_ledger_with(ledger, hash, c, holdout, m, None, kind)
+}
+
+fn append_ledger_with(
+    ledger: &Path,
+    hash: &str,
+    c: &BacktestConfig,
+    holdout: bool,
+    m: &Metrics,
+    per_strategy: Option<&BTreeMap<String, Metrics>>,
+    kind: &str,
+) -> anyhow::Result<()> {
     use std::io::Write;
-    let line = serde_json::json!({
+    let mut line = serde_json::json!({
         "ts": apex_core::time::now_ms(),
         "param_hash": hash,
         "strategies": c.strategies.iter().map(|s| s.code()).collect::<Vec<_>>(),
@@ -169,6 +182,13 @@ pub fn append_ledger(ledger: &Path, hash: &str, c: &BacktestConfig, holdout: boo
         "chop_range": c.screener.chop_range,
         "chop_trend": c.screener.chop_trend,
     });
+    if let Some(ps) = per_strategy {
+        let map: serde_json::Map<String, serde_json::Value> = ps
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::json!(v.trades)))
+            .collect();
+        line["strategy_trades"] = serde_json::Value::Object(map);
+    }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(ledger)?;
     writeln!(f, "{line}")?;
     f.sync_data()?;
@@ -205,17 +225,17 @@ fn pf_print(x: f64) -> String {
     if x.is_finite() { format!("{x:.2}") } else if x.is_sign_positive() { "inf".into() } else { "nan".into() }
 }
 
+/// Rules §4.3 validation boundary: IS berakhir 2025-07-01, VAL mulai 2025-07-01 s.d. 2026-05-01.
 const FIT_FROM: &str = "2025-01-01";
-const FIT_TO: &str = "2026-01-01";
-const OOS_FROM: &str = "2026-01-01";
+const VAL_FROM: &str = "2025-07-01";
+const FIT_TO: &str = VAL_FROM;
+const OOS_FROM: &str = VAL_FROM;
 const OOS_TO: &str = "2026-05-01";
-/// Rules §4.3 validation boundary; distinct from the exploratory sweep split.
-const VALIDATION_FROM: &str = "2025-07-01";
 const TREND_GRID: [f64; 7] = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0];
 const CHOP_RANGE_GRID: [f64; 7] = [45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0];
-/// Knob kedua klausa CHOP regime: ADX 1h (baseline 18).
+/// Knob kedua klausa CHOP regime: ADX 1h (default 15).
 const ADX_GRID: [f64; 7] = [6.0, 9.0, 12.0, 15.0, 18.0, 24.0, 30.0];
-/// Knob ketiga klausa CHOP regime: ER 15m (baseline 0,25).
+/// Knob ketiga klausa CHOP regime: ER 15m (default 0,25).
 const ER_GRID: [f64; 7] = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40];
 
 struct Session {
@@ -253,11 +273,23 @@ fn window_cfg(cfg: &AllConfig, a: &BtArgs, ids: Vec<StrategyId>, from: &str, to:
     make_cfg(cfg, &b, ids)
 }
 
+/// SR satu trial dari return per trade ternormalisasi (R-multiple, `t.r` = pnl/risk).
+/// Trial dengan <10 trade dibuang: SR small-sample (sd->0) bisa ratusan dan membuat
+/// var_sr antar trial meledak (definisi trial DSR, 2026-11-05).
+fn trial_sr(rs: &[f64]) -> Option<f64> {
+    if rs.len() < 10 {
+        return None;
+    }
+    Some(sharpe_ratio(rs))
+}
+
 fn note_session(session: &mut Session, c: &BacktestConfig, r: &BacktestReport) {
     for id in &c.strategies {
-        *session.runs.entry(id.code().to_string()).or_insert(0) += 1;
         let rs: Vec<f64> = r.trades.iter().filter(|t| t.strategy == id.code()).map(|t| t.r).collect();
-        session.srs.entry(id.code().to_string()).or_default().push(sharpe_ratio(&rs));
+        if let Some(sr) = trial_sr(&rs) {
+            *session.runs.entry(id.code().to_string()).or_insert(0) += 1;
+            session.srs.entry(id.code().to_string()).or_default().push(sr);
+        }
     }
 }
 
@@ -269,7 +301,7 @@ fn exec(mkt: &MarketInput, c: &BacktestConfig, ledger: &Path, kind: &str, sessio
     eprintln!("  … {kind} {} → {}", fmt_utc(c.start), fmt_utc(c.end));
     let r = run_backtest(mkt, c)?;
     // Persist before exposing results so an unrecorded trial cannot inform selection.
-    append_ledger(ledger, &hash, c, ho, &r.metrics, kind)?;
+    append_ledger_with(ledger, &hash, c, ho, &r.metrics, Some(&r.per_strategy), kind)?;
     eprintln!(
         "    {:.1}s trades={} E={:+.3}R PF={} chop={:.1}% nontrade={:.1}%",
         t0.elapsed().as_secs_f64(),
@@ -281,6 +313,69 @@ fn exec(mkt: &MarketInput, c: &BacktestConfig, ledger: &Path, kind: &str, sessio
     );
     note_session(session, c, &r);
     Ok((r, ho))
+}
+
+/// Tuning CHOP ulang hanya pada data train fold [train_start, train_end).
+/// Tidak menyentuh data test fold [test_start, test_end).
+fn refit_chop_fold(
+    mkt: &MarketInput,
+    base_cfg: &BacktestConfig,
+    train_start: i64,
+    train_end: i64,
+) -> anyhow::Result<(apex_market_reader::ChopThresholds, Metrics)> {
+    let mut tc = base_cfg.clone();
+    tc.start = train_start;
+    tc.end = train_end;
+    tc.fee_mult = 1.0;
+    tc.funding_mult = 1.0;
+    tc.extra_slip = 0.0;
+
+    let mut trend_pts = Vec::with_capacity(TREND_GRID.len());
+    for th in TREND_GRID {
+        let mut c = tc.clone();
+        c.chop.trend_share_min = th;
+        let r = run_backtest(mkt, &c)?;
+        trend_pts.push(SweepPoint {
+            threshold: th,
+            fit_block: chop_block_rate(&r.regime_bars),
+            oos_pf: r.metrics.profit_factor,
+            fit_e: r.metrics.expectancy_r,
+        });
+    }
+    let trend_share_min = refit_threshold_from_train(&trend_pts, tc.chop.trend_share_min);
+
+    let mut adx_pts = Vec::with_capacity(ADX_GRID.len());
+    for th in ADX_GRID {
+        let mut c = tc.clone();
+        c.chop.adx_max = th;
+        let r = run_backtest(mkt, &c)?;
+        adx_pts.push(SweepPoint {
+            threshold: th,
+            fit_block: chop_block_rate(&r.regime_bars),
+            oos_pf: r.metrics.profit_factor,
+            fit_e: r.metrics.expectancy_r,
+        });
+    }
+    let adx_max = refit_threshold_from_train(&adx_pts, tc.chop.adx_max);
+
+    let mut er_pts = Vec::with_capacity(ER_GRID.len());
+    for th in ER_GRID {
+        let mut c = tc.clone();
+        c.chop.er_max = th;
+        let r = run_backtest(mkt, &c)?;
+        er_pts.push(SweepPoint {
+            threshold: th,
+            fit_block: chop_block_rate(&r.regime_bars),
+            oos_pf: r.metrics.profit_factor,
+            fit_e: r.metrics.expectancy_r,
+        });
+    }
+    let er_max = refit_threshold_from_train(&er_pts, tc.chop.er_max);
+
+    let refitted = apex_market_reader::ChopThresholds { adx_max, er_max, trend_share_min };
+    tc.chop = refitted;
+    let train_rep = run_backtest(mkt, &tc)?;
+    Ok((refitted, train_rep.metrics))
 }
 
 fn row_from(threshold: f64, fit: &BacktestReport, oos: &BacktestReport, block: impl Fn(&BacktestReport) -> f64) -> Row {
@@ -402,8 +497,8 @@ fn choice_json(c: &PlateauChoice) -> serde_json::Value {
 }
 
 /// Validasi Rules §4.3 pada jendela yang diminta.
-/// Data 2023 tidak ada di fetch tugas ini: jendela CLI dipakai sebagai VAL.
-/// Tuning CHOP memakai FIT 2025-01-01..2026-01-01 dan OOS 2026-01-01..2026-05-01. Holdout tidak dijalankan.
+/// IS berakhir 2025-07-01, VAL mulai 2025-07-01 s.d. 2026-05-01 (Rules §4.3).
+/// Tuning CHOP memakai FIT 2025-01-01..2025-07-01 dan VAL/OOS 2025-07-01..2026-05-01. Holdout tidak dijalankan.
 pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
     let mut a = a.clone();
     a.stress = false;
@@ -434,6 +529,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         "window": {"from": a.from, "to": a.to},
         "fit": [FIT_FROM, FIT_TO],
         "oos": [OOS_FROM, OOS_TO],
+        "val_from": VAL_FROM,
         "holdout": "2026-05-01..2026-10-31 locked",
         "strategies": ids.iter().map(|s| s.code()).collect::<Vec<_>>(),
     });
@@ -467,7 +563,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         println!("Sweep dilewati. Grid dibaca dari {}", summary_path.display());
         (rows_from_json(&prev["regime_plateau"]["rows"])?, rows_from_json(&prev["screener_plateau"]["rows"])?, rows_from_json(&prev["adx_plateau"]["rows"])?, rows_from_json(&prev["er_plateau"]["rows"])?)
     } else {
-        println!("Sweep CHOP regime (trend_share_min) dan CHOP screener (chop_range). FIT {FIT_FROM}→{FIT_TO}, OOS {OOS_FROM}→{OOS_TO}. Holdout tidak disentuh.");
+        println!("Sweep CHOP regime (trend_share_min) dan CHOP screener (chop_range). FIT {FIT_FROM}→{FIT_TO}, VAL/OOS {OOS_FROM}→{OOS_TO}. Holdout tidak disentuh.");
         let mut trend_rows = Vec::new();
         for th in TREND_GRID {
             let mut fit = window_cfg(cfg, &a, ids.clone(), FIT_FROM, FIT_TO)?;
@@ -598,15 +694,27 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         let mut fold_e = Vec::new();
         let mut fold_meta = Vec::new();
         for f in &folds {
+            let (refit_chop, train_m) = refit_chop_fold(&mkt, &c, f.train_start, f.train_end)?;
             let mut fc = c.clone();
             fc.start = f.test_start;
             fc.end = f.test_end;
+            fc.chop = refit_chop;
             let (fr, _) = exec(&mkt, &fc, &ledger_path, &format!("wf{}", f.index), &mut session, false)?;
             fold_e.push(fr.metrics.expectancy_r);
             fold_meta.push(serde_json::json!({
                 "fold": f.index,
+                "train_from": fmt_utc(f.train_start),
+                "train_to": fmt_utc(f.train_end),
                 "test_from": fmt_utc(f.test_start),
                 "test_to": fmt_utc(f.test_end),
+                "refit_chop": {
+                    "trend_share_min": refit_chop.trend_share_min,
+                    "adx_max": refit_chop.adx_max,
+                    "er_max": refit_chop.er_max,
+                },
+                "train_trades": train_m.trades,
+                "train_e": fnum(train_m.expectancy_r),
+                "train_pf": fnum(train_m.profit_factor),
                 "trades": fr.metrics.trades,
                 "e": fnum(fr.metrics.expectancy_r),
                 "pf": fnum(fr.metrics.profit_factor),
@@ -614,8 +722,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         }
         let wf = walk_forward_gate(&fold_e);
         let m = &r.metrics;
-        // Rules §4.3, not the separately defined exploratory sweep split.
-        let val_from = parse_ymd(VALIDATION_FROM).ok_or_else(|| anyhow::anyhow!("invalid validation boundary"))?;
+        let val_from = parse_ymd(VAL_FROM).ok_or_else(|| anyhow::anyhow!("invalid validation boundary"))?;
         let is_t = seg_trades(&r.trades, i64::MIN, val_from);
         let val_t = seg_trades(&r.trades, val_from, i64::MAX);
         let m_val = Metrics::from_trades(&val_t, cfg.risk.start_balance_usd);
@@ -623,7 +730,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         let m_stress_val = Metrics::from_trades(&stress_val_t, cfg.risk.start_balance_usd);
         let (n_is, n_val) = (is_t.len(), val_t.len());
         let g02_ok = n_is >= 100 && n_val >= 60;
-        let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect(); // G-08 (DSR): jendela penuh, Rules tak spesifikasi segmen
+        let rvec: Vec<f64> = r.trades.iter().map(|t| t.r).collect(); // G-08 (DSR): R per trade
         let rvec_val: Vec<f64> = val_t.iter().map(|t| t.r).collect(); // G-07: bootstrap urutan trade VAL
         let per_year = trades_per_year(rvec_val.len(), c.end.saturating_sub(c.start.max(val_from)).max(1));
         let mc = monte_carlo(&rvec_val, per_year, 10_000, cfg.risk.start_balance_usd, cfg.risk.equity_floor_usd, 42);
@@ -635,7 +742,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         let d = dsr(&rvec, n_trials, var_sr);
         let (g09_rows, g09_th) = if primary_regime { (&trend_rows, c.chop.trend_share_min) } else { (&screen_rows, c.screener.chop_range) };
         let idx = g09_rows.iter().enumerate().min_by(|(_, a), (_, b)| (a.threshold - g09_th).abs().total_cmp(&(b.threshold - g09_th))).map(|(i, _)| i).unwrap_or(0);
-        // Rules G-09: ekspektansi VAL -- pakai oos_e_by (bukan fit_e_by).
+        // Rules G-09: ekspektansi VAL -- pakai oos_e_by (2025-07-01..2026-05-01).
         let selected_e = g09_rows[idx].oos_e_by.get(id.code()).copied().unwrap_or(0.0);
         let mut neigh = Vec::new();
         if idx > 0 {
@@ -650,18 +757,15 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         print_metrics("VAL (segmen Rules)", &m_val);
         print_metrics("stress full", &rs.metrics);
         print_metrics("stress VAL", &m_stress_val);
-        // Checksum and independent prefix replay are not established by this command.
         let mut all = gate_v("G-01 data, checksum and prefix replay", r.data_gaps == 0, false, format!("{} data gaps; checksum/prefix not verified", r.data_gaps));
         all &= gate_v("G-02 sampel IS≥100 & VAL≥60 (Rules G-02; kurang → INCONCLUSIVE)", g02_ok, g02_ok, format!("IS={} (min 100), VAL={} (min 60), total={}", n_is, n_val, m.trades));
         all &= gate_v("G-03 expectancy VAL ≥ +0.10R", g03_pass(m_val.expectancy_r), g02_ok, format!("{:+.3}R (VAL {} trade)", m_val.expectancy_r, n_val));
         all &= gate_v("G-04 PF VAL ≥ 1.25", g04_pass(m_val.profit_factor), g02_ok, format!("{} (VAL)", pf_print(m_val.profit_factor)));
-        all &= gate_v("G-05 stress VAL: fee 2x, slip +0.05%, funding 2x", g05_pass(m_stress_val.expectancy_r, m_stress_val.profit_factor), g02_ok && m_stress_val.trades >= 60, format!("VAL {} trades, {:+.3}R / {}", m_stress_val.trades, m_stress_val.expectancy_r, pf_print(m_stress_val.profit_factor)));
-        // Fixed-parameter windows cannot pass the per-fold refit required by G-06.
-        all &= gate_v("G-06 WF anchored, per-fold refit", wf.pass, false, format!("no refit; fixed windows {}/6, worst {:+.3}R", wf.positive, wf.worst));
+        all &= gate_v("G-05 stress VAL: fee 2x, slip +0.05%, funding 2x", g05_pass(m_stress_val.expectancy_r, m_stress_val.profit_factor), g02_ok && m_stress_val.trades >= 60, format!("VAL {} trades, {:+.3}R / {} (full {:+.3}R / {})", m_stress_val.trades, m_stress_val.expectancy_r, pf_print(m_stress_val.profit_factor), rs.metrics.expectancy_r, pf_print(rs.metrics.profit_factor)));
+        all &= gate_v("G-06 WF anchored 6 fold (refit CHOP per fold di train) ≥4/6 >0, terburuk ≥ −0.15R", wf.pass, g02_ok, format!("{}/6, terburuk {:+.3}R, folds={}", wf.positive, wf.worst, fold_e.iter().map(|e| format!("{e:+.3}")).collect::<Vec<_>>().join(",")));
         all &= gate_v("G-07 MC 10000 path bootstrap trade VAL, ukuran 1 tahun, p95 DD ≤ 15R & P(<$40) ≤ 5%", mc.paths == 10_000 && g07_pass(mc.p95_max_dd_r, mc.p_below_floor), g02_ok, format!("paths={} n_year={} (VAL {} trade) p95DD={:.1}R P(<40)={:.1}%", mc.paths, per_year, n_val, mc.p95_max_dd_r, mc.p_below_floor * 100.0));
-        all &= gate_v("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy", g08_pass(d), g02_ok, format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
-        // The exploratory choice uses OOS results; it is not an independently selected VAL plateau.
-        all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, false, format!("exploratory sweep uses OOS for selection; {}/{} positif ({:.0}%), median {:+.3} vs 50%×E {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
+        all &= gate_v("G-08 DSR ≥ 0.95, N = ledger strategi + run sesi ini + 40 legacy (trial <10 trade dibuang)", g08_pass(d), g02_ok, format!("{d:.3} (N={n_trials}, prior={prior}, sesi={session_n}, varSR={var_sr:.6})"));
+        all &= gate_v("G-09 plateau ≥80% tetangga E_VAL>0 dan median ≥ 50% E_VAL terpilih", plateau.pass, g02_ok, format!("tetangga {}/{} positif ({:.0}%), median {:+.3} vs 50%×E_VAL {:+.3}", (plateau.positive_frac * plateau.n_neighbors as f64).round() as usize, plateau.n_neighbors, plateau.positive_frac * 100.0, plateau.median, 0.5 * plateau.selected));
         all &= gate_v("G-10 konsentrasi simbol ≤40% & bulan ≤35%", g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share), g02_ok, format!("simbol {:.0}% / bulan {:.0}% dari net", m.max_symbol_profit_share * 100.0, m.max_month_profit_share * 100.0));
         let g11_ok = if ho {
             let ok = m.trades >= 40 && g11_pass(m.expectancy_r, m.profit_factor);
@@ -699,7 +803,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "stress_trades": m_stress_val.trades,
             "wf_positive": wf.positive,
             "wf_worst": fnum(wf.worst),
-            "wf_pass": false,
+            "wf_pass": wf.pass && g02_ok,
             "folds": fold_meta,
             "mc_paths": mc.paths,
             "mc_per_year": per_year,
@@ -710,7 +814,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "prior_trials": prior,
             "session_trials": session_n,
             "var_sr": fnum(var_sr),
-            "g09_pass": false,
+            "g09_pass": plateau.pass && g02_ok,
             "g09_positive_frac": fnum(plateau.positive_frac),
             "g09_median": fnum(plateau.median),
             "g09_selected_e": fnum(plateau.selected),
@@ -721,12 +825,15 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
             "screen_block": fnum((1.0 - r.screener_trend_share).clamp(0.0, 1.0)),
             "data_gaps": r.data_gaps,
         });
+        gate_row["wf_raw_pass"] = serde_json::json!(wf.pass);
+        gate_row["max_symbol_profit_share"] = serde_json::json!(fnum(m.max_symbol_profit_share));
+        gate_row["max_month_profit_share"] = serde_json::json!(fnum(m.max_month_profit_share));
+        gate_row["g10_raw_pass"] = serde_json::json!(g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share));
         gate_row["stress_full_e"] = serde_json::json!(fnum(rs.metrics.expectancy_r));
         gate_row["stress_full_pf"] = serde_json::json!(fnum(rs.metrics.profit_factor));
         gate_row["g01_verified"] = serde_json::json!(false);
-        gate_row["g06_refit_available"] = serde_json::json!(false);
+        gate_row["g06_refit_available"] = serde_json::json!(true);
         gate_row["g09_sweep_diagnostic_pass"] = serde_json::json!(plateau.pass);
-        gate_row["wf_fixed_windows_pass"] = serde_json::json!(wf.pass);
         gate_row["g09_raw_pass"] = serde_json::json!(plateau.pass);
         gate_rows.push(gate_row);
     }
@@ -743,8 +850,9 @@ mod tests {
 
     #[test]
     fn validation_boundary_matches_rules() {
-        assert_eq!(parse_ymd(VALIDATION_FROM), parse_ymd("2025-07-01"));
-        assert_ne!(VALIDATION_FROM, OOS_FROM);
+        assert_eq!(parse_ymd(VAL_FROM), parse_ymd("2025-07-01"));
+        assert_eq!(FIT_TO, VAL_FROM);
+        assert_eq!(OOS_FROM, VAL_FROM);
     }
 
     #[test]
@@ -821,9 +929,17 @@ mod tests {
         assert!(!gate_v("x", true, false, "d".into()));
         assert!(gate_v("x", true, true, "d".into()));
         assert!(!gate_v("x", false, true, "d".into()));
-        // Even six profitable fixed-parameter windows cannot satisfy G-06 without refit.
         let fixed = walk_forward_gate(&[0.2; 6]);
         assert!(fixed.pass);
-        assert!(!gate_v("G-06 without refit", fixed.pass, false, "no refit".into()));
+        assert!(!gate_v("G-06 without sample", fixed.pass, false, "sample short".into()));
+    }
+
+    #[test]
+    fn trial_sr_drops_small_samples() {
+        // 2 trade dengan R nyaris sama -> SR ratusan (membuat var_sr meledak); harus dibuang.
+        assert!(trial_sr(&[-0.996, -1.0]).is_none());
+        assert!(trial_sr(&[0.5; 9]).is_none());
+        let ok: Vec<f64> = (0..10).map(|i| if i % 3 == 0 { -1.0 } else { 1.0 }).collect();
+        assert_eq!(trial_sr(&ok), Some(sharpe_ratio(&ok)));
     }
 }

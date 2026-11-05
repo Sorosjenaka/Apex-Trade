@@ -128,8 +128,10 @@ pub fn raw_state_with(s: &ReaderSnapshot, th: &ChopThresholds) -> (RegimeState, 
     (RegimeState::BtcLed, vec![format!("btc_trend={:?} dom={:?}", s.btc_trend, s.dom_dir)])
 }
 
-/// Ambang klausa CHOP di RG-2. Default = hipotesis MARKET_READER.md (ADX 18, ER 0,25, trend share 20%).
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// Ambang klausa CHOP di RG-2. Default = adopsi tuning T-H2 (ADX 15, ER 0,25, trend share 15%).
+#[serde(default)]
 pub struct ChopThresholds {
     pub adx_max: f64,
     pub er_max: f64,
@@ -138,7 +140,7 @@ pub struct ChopThresholds {
 
 impl Default for ChopThresholds {
     fn default() -> Self {
-        Self { adx_max: 18.0, er_max: 0.25, trend_share_min: 20.0 }
+        Self { adx_max: 15.0, er_max: 0.25, trend_share_min: 15.0 }
     }
 }
 

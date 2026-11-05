@@ -218,6 +218,149 @@ fn rolling_sum(v: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
+fn hash_bars_full(bars: &[Bar]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bars.len().hash(&mut h);
+    for b in bars {
+        b.open_time.hash(&mut h);
+        b.open.to_bits().hash(&mut h);
+        b.high.to_bits().hash(&mut h);
+        b.low.to_bits().hash(&mut h);
+        b.close.to_bits().hash(&mut h);
+        b.volume.to_bits().hash(&mut h);
+        b.quote_volume.to_bits().hash(&mut h);
+        b.trades.hash(&mut h);
+        b.taker_buy_base.to_bits().hash(&mut h);
+    }
+    h.finish()
+}
+
+fn hash_screener_cfg(c: &ScreenerConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for x in [
+        c.adx_trend, c.adx_strong, c.adx_range, c.er_trend, c.er_range,
+        c.chop_trend, c.chop_range, c.srv_trend, c.srv_range,
+        c.atr_ratio_trend, c.atr_ratio_range, c.atr_pct_min, c.atr_pct_max,
+    ] {
+        x.to_bits().hash(&mut h);
+    }
+    c.min_votes.hash(&mut h);
+    c.min_range_flags.hash(&mut h);
+    c.enter_bars.hash(&mut h);
+    c.atr_median_bars.hash(&mut h);
+    h.finish()
+}
+
+type SymBaseCache = (SymbolSeries, Vec<Ms>, Vec<f64>, Vec<f64>);
+
+fn hash_strategy_params(p: &StrategyParams) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for x in [
+        p.sl_buffer_atr, p.s1_gap_atr, p.s1_body_frac, p.s1_srv_min,
+        p.s3_sbpo_min, p.s4_min_height, p.s5_distrank_min,
+        p.s5_apexwave_min, p.s5_impulse_atr, p.sl_min_pct, p.sl_max_pct,
+    ] {
+        x.to_bits().hash(&mut h);
+    }
+    (
+        p.s1_ttl, p.s2_pool_age, p.s2_reclaim_bars, p.s2_ttl,
+        p.s3_retest_bars, p.s3_market, p.s3_ttl, p.s4_min_range,
+        p.s4_max_range, p.s4_lps_bars, p.s4_ttl, p.s5_ttl,
+    )
+        .hash(&mut h);
+    h.finish()
+}
+
+type SigBarCache = Vec<std::sync::OnceLock<Vec<Signal>>>;
+
+fn get_sig_cache(s: &SymbolInput, entry: &[Bar], cfg: &BacktestConfig, step: i64) -> std::sync::Arc<SigBarCache> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    type SigKey = (String, i64, u64, u64, u64, u64, u64, Vec<StrategyId>);
+    static SIG_CACHE: OnceLock<Mutex<HashMap<SigKey, Arc<SigBarCache>>>> = OnceLock::new();
+    let h_entry = hash_bars_full(entry);
+    let h_h1 = hash_bars_full(&s.h1);
+    let h_m15 = if cfg.entry_tf == Tf::M15 { h_entry } else { hash_bars_full(&s.m15) };
+    let key = (
+        s.symbol.clone(),
+        step,
+        h_entry,
+        h_h1,
+        h_m15,
+        hash_screener_cfg(&cfg.screener),
+        hash_strategy_params(&cfg.params),
+        cfg.strategies.clone(),
+    );
+    let lock = SIG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    lock.lock().ok().and_then(|g| g.get(&key).cloned()).unwrap_or_else(|| {
+        let built: Arc<SigBarCache> = Arc::new((0..entry.len()).map(|_| OnceLock::new()).collect());
+        if let Ok(mut g) = lock.lock() {
+            if g.len() >= 512 {
+                g.clear();
+            }
+            g.insert(key, Arc::clone(&built));
+        }
+        built
+    })
+}
+
+fn build_sym_ctx(s: &SymbolInput, entry: &[Bar], cfg: &BacktestConfig, step: i64) -> SymCtx {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static BASE_CACHE: OnceLock<Mutex<HashMap<(String, i64, u64, u64), Arc<SymBaseCache>>>> = OnceLock::new();
+    static STATE_CACHE: OnceLock<Mutex<HashMap<(String, u64, u64, u64), Arc<Vec<SymState>>>>> = OnceLock::new();
+
+    let h_entry = hash_bars_full(entry);
+    let h_h1 = hash_bars_full(&s.h1);
+    let h_m15 = if cfg.entry_tf == Tf::M15 { h_entry } else { hash_bars_full(&s.m15) };
+    let base_key = (s.symbol.clone(), step, h_entry, h_h1);
+    let base_lock = BASE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let base = base_lock.lock().ok().and_then(|g| g.get(&base_key).cloned()).unwrap_or_else(|| {
+        let qv: Vec<f64> = entry.iter().map(|b| b.quote_volume).collect();
+        let tr: Vec<f64> = entry.iter().map(|b| b.trades as f64).collect();
+        let built = Arc::new((
+            SymbolSeries::new_with_tf(&s.symbol, entry, &s.h1, cfg.entry_tf),
+            entry.iter().map(|b| b.open_time).collect(),
+            rolling_sum(&qv, (86_400_000 / step) as usize),
+            rolling_sum(&tr, (86_400_000 / step) as usize),
+        ));
+        if let Ok(mut g) = base_lock.lock() {
+            if g.len() >= 512 {
+                g.clear();
+            }
+            g.insert(base_key, Arc::clone(&built));
+        }
+        built
+    });
+
+    let state_key = (s.symbol.clone(), h_h1, h_m15, hash_screener_cfg(&cfg.screener));
+    let state_lock = STATE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let states = state_lock.lock().ok().and_then(|g| g.get(&state_key).cloned()).unwrap_or_else(|| {
+        let built = Arc::new(screener_states(&s.h1, &s.m15, &cfg.screener));
+        if let Ok(mut g) = state_lock.lock() {
+            if g.len() >= 512 {
+                g.clear();
+            }
+            g.insert(state_key, Arc::clone(&built));
+        }
+        built
+    });
+
+    SymCtx {
+        series: base.0.clone(),
+        states: (*states).clone(),
+        ot15: base.1.clone(),
+        qv24: base.2.clone(),
+        tr24: base.3.clone(),
+        vg_in: false,
+        vg_fail: 0,
+        vg_pass: 0,
+    }
+}
+
 pub fn screener_states(h1: &[Bar], m15: &[Bar], cfg: &ScreenerConfig) -> Vec<SymState> {
     let f = SymbolFeatures::compute(h1, cfg);
     let c15 = apex_indicators::closes(m15);
@@ -308,14 +451,19 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
         .iter()
         .zip(entries.iter())
         .map(|(s, entry)| {
-            let qv: Vec<f64> = entry.iter().map(|b| b.quote_volume).collect();
-            let tr: Vec<f64> = entry.iter().map(|b| b.trades as f64).collect();
+            let _ = (s, entry);
+            return build_sym_ctx(s, entry, cfg, step);
+            #[allow(unreachable_code)]
             SymCtx {
                 series: SymbolSeries::new_with_tf(&s.symbol, entry, &s.h1, cfg.entry_tf),
-                states: screener_states(&s.h1, &s.m15, &cfg.screener),
-                ot15: entry.iter().map(|b| b.open_time).collect(),
-                qv24: rolling_sum(&qv, (86_400_000 / step) as usize),
-                tr24: rolling_sum(&tr, (86_400_000 / step) as usize),
+                states: Vec::new(),
+                ot15: Vec::new(),
+                qv24: Vec::new(),
+                tr24: Vec::new(),
+
+
+
+
                 vg_in: false,
                 vg_fail: 0,
                 vg_pass: 0,
@@ -325,6 +473,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
 
     // Variant K: seed only with completed S5 trades from a separate pre-start IS replay.
     // This replay runs the same risk rules and is always bounded strictly before OOS.
+    let sig_caches: Vec<std::sync::Arc<SigBarCache>> = mkt.symbols.iter().zip(entries.iter()).map(|(s, entry)| get_sig_cache(s, entry, cfg, step)).collect();
     let mut knn_memory = Vec::new();
     if cfg.params.s5_knn_enabled && cfg.strategies.contains(&StrategyId::S5Rmp) {
         if let Some(first) = knn_training_start(mkt.btc_m15.first().map(|b| b.open_time), cfg.start)? {
@@ -610,7 +759,7 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
             if state.dir() == 0 {
                 continue;
             }
-            for sig in evaluate(&sc.series, i, state, &cfg.strategies, &cfg.params) {
+            for sig in sig_caches[j][i].get_or_init(|| evaluate(&sc.series, i, state, &cfg.strategies, &cfg.params)).iter().cloned() {
                 bump(&mut signals, sig.strategy.code());
                 if !sc.vg_in {
                     bump(&mut skips, "VOLUME_GATE");

@@ -15,7 +15,7 @@ pub mod stats;
 pub use context::{RegimeMode, RegimeTimeline};
 pub use engine::{run_backtest, screener_states, BacktestConfig, BacktestReport, MarketInput, SymbolInput, Trade};
 pub use gates::{
-    adopt_threshold, anchored_folds, chop_block_rate, count_strategy_trials, dsr_variance, g02_pass, g03_pass, g04_pass, g05_pass, g07_pass, g08_pass, g10_pass, g11_pass, honest_n_trials, non_trade_rate, plateau_gate, select_plateau, trades_per_year, walk_forward_gate, AnchoredFold, PlateauChoice, PlateauGate, SweepPoint, WfGate,
+    adopt_threshold, anchored_folds, chop_block_rate, count_strategy_trials, dsr_variance, g02_pass, g03_pass, g04_pass, g05_pass, g07_pass, g08_pass, g10_pass, g11_pass, honest_n_trials, non_trade_rate, plateau_gate, refit_threshold_from_train, select_plateau, trades_per_year, walk_forward_gate, AnchoredFold, PlateauChoice, PlateauGate, SweepPoint, WfGate,
 };
 pub use stats::{dsr, monte_carlo, psr, sample_variance, sharpe_ratio, Metrics, MonteCarlo};
 
