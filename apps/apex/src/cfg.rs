@@ -39,6 +39,7 @@ pub struct AllConfig {
 impl AllConfig {
     pub fn load(dir: &Path) -> anyhow::Result<AllConfig> {
         let engine: EngineConfig = load_toml(&dir.join("engine.toml"))?;
+        engine.validate_ws_urls().map_err(anyhow::Error::msg)?;
         let risk: RiskConfig = load_toml(&dir.join("risk.toml"))?;
         risk.validate_golden_rules()?;
         let screener: ScreenerFile = load_toml(&dir.join("screener.toml"))?;

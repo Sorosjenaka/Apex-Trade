@@ -14,7 +14,7 @@ kill_file = "state/KILL"
 live_rest_base = "https://fapi.binance.com"
 live_ws_base = "wss://fstream.binance.com"
 testnet_rest_base = "https://demo-fapi.binance.com"
-testnet_ws_base = "wss://fstream.binancefuture.com"
+testnet_ws_base = "wss://demo-fstream.binance.com"
 public_rest_base = "https://fapi.binance.com"   # data publik saja (tanpa key)
 
 recv_window_ms = 5000

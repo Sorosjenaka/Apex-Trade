@@ -2115,7 +2115,7 @@ def try_start_ws_probe():
             def on_st(s):
                 _WS_STATUS["ws_probe"] = s
 
-            c = WSClient("fstream.binance.com", "/ws", on_message=on_msg, on_status=on_st)
+            c = WSClient("fstream.binance.com", "/market/ws", on_message=on_msg, on_status=on_st)
             c.start()
             time.sleep(1.5)
             c.send_text(json.dumps({"method": "SUBSCRIBE", "params": ["ethusdt@aggTrade"], "id": 99}))

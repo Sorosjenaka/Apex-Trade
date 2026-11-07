@@ -162,40 +162,73 @@ class WSClient:
                     pass
 
 
+def route_for_stream(stream: str) -> str:
+    """Klasifikasikan nama stream Binance ke rute '/public' atau '/market' (migrasi 2026-04-23)."""
+    s = (stream or "").strip().lower()
+    if s == "!bookticker":
+        return "public"
+    if "@" in s:
+        head = s.split("@", 1)[1].split("@", 1)[0]
+        if head in ("bookticker", "rpidepth", "trade") or head.startswith("depth"):
+            return "public"
+    return "market"
+
+
+def build_ws_path(route: str, streams: list[str] | None = None) -> str:
+    """Bangun path rute baru '/<route>/stream?streams=...' atau '/<route>/ws'."""
+    r = route if route in ("public", "market", "private") else "market"
+    if streams:
+        return f"/{r}/stream?streams=" + "/".join(streams)
+    return f"/{r}/ws"
+
+
 class BinanceStreamHub:
-    """Shared upstream WS; fans out JSON lines to SSE subscribers. Dynamic SUBSCRIBE."""
+    """Shared upstream WS per rute ('market' & 'public'); fans out JSON lines to SSE subscribers."""
     def __init__(self):
         self._subs: Set[str] = set()
         self._clients = []  # list of queues (list append)
         self._lock = threading.RLock()
         self._status = "idle"
-        self._client: Optional[WSClient] = None
+        self._route_status: dict[str, str] = {}
+        self._clients_by_route: dict[str, WSClient] = {}
         self._last_msg = 0.0
 
     @property
     def status(self):
-        return {"status": self._status, "streams": sorted(self._subs), "last_msg_age_ms": int((time.time()-self._last_msg)*1000) if self._last_msg else None}
+        return {
+            "status": self._status,
+            "routes": dict(self._route_status),
+            "streams": sorted(self._subs),
+            "last_msg_age_ms": int((time.time() - self._last_msg) * 1000) if self._last_msg else None,
+        }
+
+    def _ensure_route(self, route: str) -> WSClient:
+        with self._lock:
+            existing = self._clients_by_route.get(route)
+            if existing is not None:
+                return existing
+            seed = "ethusdt@bookticker" if route == "public" else "ethusdt@markPrice@1s"
+            client = WSClient(
+                "fstream.binance.com",
+                build_ws_path(route, [seed]),
+                on_message=self._on_msg,
+                on_status=lambda st, r=route: self._on_status(r, st),
+            )
+            self._clients_by_route[route] = client
+        client.start()
+        return client
 
     def _ensure(self):
-        if self._client:
-            return
-        # start with empty combined endpoint that accepts SUBSCRIBE
-        self._client = WSClient(
-            "fstream.binance.com",
-            "/stream?streams=ethusdt@markPrice@1s",
-            on_message=self._on_msg,
-            on_status=self._on_status,
-        )
-        self._client.start()
+        self._ensure_route("market")
 
-    def _on_status(self, s: str):
-        self._status = s
-        if s == "open":
-            # re-subscribe desired
-            with self._lock:
-                streams = list(self._subs)
-            if streams:
-                self._client.send_text(json.dumps({"method": "SUBSCRIBE", "params": streams, "id": int(time.time())}))
+    def _on_status(self, route: str, s: str):
+        with self._lock:
+            self._route_status[route] = s
+            self._status = "open" if "open" in self._route_status.values() else s
+            streams = [st for st in self._subs if route_for_stream(st) == route]
+            client = self._clients_by_route.get(route)
+        if s == "open" and streams and client is not None:
+            client.send_text(json.dumps({"method": "SUBSCRIBE", "params": sorted(streams), "id": int(time.time())}))
 
     def _on_msg(self, text: str):
         self._last_msg = time.time()
@@ -209,16 +242,21 @@ class BinanceStreamHub:
 
     def set_streams(self, streams: Set[str]):
         streams = {s.lower() for s in streams if s}
-        self._ensure()
         with self._lock:
             add = streams - self._subs
             rem = self._subs - streams
             self._subs = streams
-        if self._status == "open" and self._client:
-            if add:
-                self._client.send_text(json.dumps({"method": "SUBSCRIBE", "params": sorted(add), "id": int(time.time()*1000)}))
-            if rem:
-                self._client.send_text(json.dumps({"method": "UNSUBSCRIBE", "params": sorted(rem), "id": int(time.time()*1000)+1}))
+        for route in ("market", "public"):
+            add_r = sorted(st for st in add if route_for_stream(st) == route)
+            rem_r = sorted(st for st in rem if route_for_stream(st) == route)
+            if not add_r and not rem_r:
+                continue
+            client = self._ensure_route(route)
+            if self._route_status.get(route) == "open":
+                if add_r:
+                    client.send_text(json.dumps({"method": "SUBSCRIBE", "params": add_r, "id": int(time.time() * 1000)}))
+                if rem_r:
+                    client.send_text(json.dumps({"method": "UNSUBSCRIBE", "params": rem_r, "id": int(time.time() * 1000) + 1}))
 
     def add_client(self):
         q = []

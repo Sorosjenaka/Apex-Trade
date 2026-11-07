@@ -633,7 +633,7 @@ class MicroHub:
         self._ws = None
 
     def _ws_loop(self):
-        from wsclient import WSClient
+        from wsclient import WSClient, build_ws_path
 
         backoff = 1.5
         while not self._stop.is_set():
@@ -641,7 +641,7 @@ class MicroHub:
                 with self.lock:
                     syms = sorted(self.active) or ["ETHUSDT"]
                 parts = [f"{s.lower()}@depth20@100ms" for s in syms]
-                path = "/stream?streams=" + "/".join(parts)
+                path = build_ws_path("public", parts)
                 got = {"n": 0}
                 conn_start = time.time()
 
@@ -687,8 +687,9 @@ class MicroHub:
                         backoff = 1.5
                     time.sleep(1.0)
                     with self.lock:
-                        want = "/stream?streams=" + "/".join(
-                            f"{s.lower()}@depth20@100ms" for s in sorted(self.active) or ["ETHUSDT"]
+                        want = build_ws_path(
+                            "public",
+                            [f"{s.lower()}@depth20@100ms" for s in sorted(self.active) or ["ETHUSDT"]],
                         )
                     if want != path:
                         break

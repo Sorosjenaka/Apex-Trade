@@ -343,16 +343,22 @@ pub async fn screen(cfg: &AllConfig, top: usize) -> anyhow::Result<()> {
 }
 
 pub async fn record(cfg: &AllConfig, data: &Path) -> anyhow::Result<()> {
+    let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
     let mut syms = vec!["BTCUSDT".to_string(), "BTCDOMUSDT".to_string()];
     syms.extend(cfg.universe());
+    syms.dedup();
     let mut streams = Vec::new();
+    let mut targets = Vec::new();
     for s in &syms {
         let l = s.to_lowercase();
         if cfg.strategies.research_entry_5m && s != "BTCDOMUSDT" {
             streams.push(format!("{l}@kline_5m"));
+            targets.push((s.clone(), Tf::M5));
         }
         streams.push(format!("{l}@kline_15m"));
+        targets.push((s.clone(), Tf::M15));
         streams.push(format!("{l}@kline_1h"));
+        targets.push((s.clone(), Tf::H1));
     }
     let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
     let base = cfg.engine.live_ws_base.clone(); // stream PUBLIK mainnet (tanpa key, read-only)
@@ -369,6 +375,14 @@ pub async fn record(cfg: &AllConfig, data: &Path) -> anyhow::Result<()> {
                         if rec.record(&symbol, tf, &bar)? {
                             println!("{} {symbol} {interval} close={}", fmt_utc(bar.open_time + tf.ms()), bar.close);
                         }
+                    }
+                }
+                Some(apex_data::ws::WsEvent::Reconnected) => {
+                    // Saat WS tersambung kembali setelah terputus/rotasi 23 jam, tambal celah kline tertutup via REST.
+                    match rec.backfill_gaps(&pc, &targets, now_ms()).await {
+                        Ok(n) if n > 0 => println!("{} WS reconnect: backfill {n} bar tertutup", fmt_utc(now_ms())),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("{} WS reconnect backfill gagal: {e}", fmt_utc(now_ms())),
                     }
                 }
                 Some(_) => {}

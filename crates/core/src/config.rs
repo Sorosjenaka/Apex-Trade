@@ -186,7 +186,7 @@ impl Default for EngineConfig {
             live_rest_base: "https://fapi.binance.com".into(),
             live_ws_base: "wss://fstream.binance.com".into(),
             testnet_rest_base: "https://demo-fapi.binance.com".into(),
-            testnet_ws_base: "wss://fstream.binancefuture.com".into(),
+            testnet_ws_base: "wss://demo-fstream.binance.com".into(),
             public_rest_base: "https://fapi.binance.com".into(),
             recv_window_ms: 5_000,
             max_clock_offset_ms: 500,
@@ -215,6 +215,46 @@ impl EngineConfig {
             Mode::Testnet | Mode::Paper => &self.testnet_ws_base,
         }
     }
+    /// Pastikan `live_ws_base` dan `testnet_ws_base` hanya berisi host akar WebSocket
+    /// karena rute `/public`, `/market`, dan `/private` ditambahkan otomatis oleh klien WS.
+    pub fn validate_ws_urls(&self) -> Result<(), String> {
+        validate_ws_root("live_ws_base", &self.live_ws_base)?;
+        validate_ws_root("testnet_ws_base", &self.testnet_ws_base)
+    }
+}
+
+fn validate_ws_root(field: &str, raw: &str) -> Result<(), String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let rest = trimmed
+        .strip_prefix("wss://")
+        .or_else(|| trimmed.strip_prefix("ws://"))
+        .ok_or_else(|| {
+            format!(
+                "konfigurasi URL WebSocket tidak valid ({field}): nilai '{raw}' harus diawali 'wss://' atau 'ws://' (contoh: 'wss://fstream.binance.com')"
+            )
+        })?;
+    if rest.is_empty() || rest.contains('?') {
+        return Err(format!(
+            "konfigurasi URL WebSocket tidak valid ({field}): nilai '{raw}' hanya boleh berisi skema dan host akar tanpa query string"
+        ));
+    }
+    if let Some((_, path)) = rest.split_once('/') {
+        let p = format!("/{}", path.to_ascii_lowercase());
+        if p == "/ws" || p.starts_with("/ws/") || p == "/stream" || p.starts_with("/stream?") || p.starts_with("/stream/") {
+            return Err(format!(
+                "konfigurasi URL WebSocket tidak valid ({field}): nilai '{raw}' memakai path WebSocket lama ('{p}') yang sudah dimatikan sejak 2026-04-23; hapus path dan isi host akar saja (contoh: 'wss://fstream.binance.com' atau 'wss://demo-fstream.binance.com')"
+            ));
+        }
+        if p.ends_with("/public") || p.ends_with("/market") || p.ends_with("/private") {
+            return Err(format!(
+                "konfigurasi URL WebSocket tidak valid ({field}): nilai '{raw}' sudah berakhiran rute kategori ('{p}'); hapus akhiran tersebut dan isi host akar saja karena rute '/public', '/market', atau '/private' ditambahkan otomatis di kode"
+            ));
+        }
+        return Err(format!(
+            "konfigurasi URL WebSocket tidak valid ({field}): nilai '{raw}' tidak boleh memiliki path tambahan ('{p}'); isi host akar saja"
+        ));
+    }
+    Ok(())
 }
 
 pub fn load_toml<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> Result<T, ConfigError> {
@@ -254,5 +294,27 @@ mod tests {
         assert_eq!(e.mode, Mode::Testnet);
         assert!(!e.arm);
         assert_eq!(e.rest_base(), "https://demo-fapi.binance.com");
+    }
+
+    #[test]
+    fn ws_base_rejects_legacy_and_routed_paths() {
+        let e = EngineConfig::default();
+        assert_eq!(e.testnet_ws_base, "wss://demo-fstream.binance.com");
+        e.validate_ws_urls().unwrap();
+
+        for bad in [
+            "wss://fstream.binance.com/ws",
+            "wss://fstream.binance.com/ws/btcusdt@kline_15m",
+            "wss://fstream.binance.com/stream",
+            "wss://fstream.binance.com/stream?streams=btcusdt@kline_15m",
+            "wss://fstream.binance.com/public",
+            "wss://fstream.binance.com/market",
+            "wss://demo-fstream.binance.com/private/",
+            "https://fstream.binance.com",
+        ] {
+            let cfg = EngineConfig { live_ws_base: bad.into(), ..Default::default() };
+            let err = cfg.validate_ws_urls().unwrap_err().to_string();
+            assert!(err.contains("live_ws_base"), "expected field name in error: {err}");
+        }
     }
 }
