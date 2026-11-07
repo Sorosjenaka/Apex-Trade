@@ -26,5 +26,6 @@ pub use artatrade_exec::*;
 pub use exchange::FuturesExchange;
 pub use manager::{EntryIntent, ManagedTrade, OrderManager, TradeState};
 pub use safety::{authorize, ExecMode, SafetyError};
+pub use store::{LoadOutcome, StateStore, StoreError};
 pub use types::*;
 pub use yahudi_exec::*;

@@ -15,7 +15,10 @@ const T0: i64 = 1_767_225_600_000; // 2026-01-01 00:00 UTC
 
 fn filters() -> BTreeMap<String, SymbolFilters> {
     let mut m = BTreeMap::new();
-    m.insert("ETHUSDT".into(), SymbolFilters::synthetic("ETHUSDT", dec!(0.01), dec!(0.001), dec!(5)));
+    m.insert(
+        "ETHUSDT".into(),
+        SymbolFilters::synthetic("ETHUSDT", dec!(0.01), dec!(0.001), dec!(5)),
+    );
     m
 }
 
@@ -28,8 +31,22 @@ fn tmpdir(name: &str) -> std::path::PathBuf {
 
 fn mgr(name: &str, ex: MockExchange, policy: OrphanPolicy) -> OrderManager<MockExchange> {
     let d = tmpdir(name);
-    let cfg = EngineConfig { kill_file: d.join("KILL"), state_dir: d.clone(), orphan_policy: policy, ..Default::default() };
-    let mut m = OrderManager::new(ex, ExecMode::Paper, cfg, RiskConfig::default(), StateStore::file(&d.join("oms_state.json")), AuditLog::in_memory(), filters()).unwrap();
+    let cfg = EngineConfig {
+        kill_file: d.join("KILL"),
+        state_dir: d.clone(),
+        orphan_policy: policy,
+        ..Default::default()
+    };
+    let mut m = OrderManager::new(
+        ex,
+        ExecMode::Paper,
+        cfg,
+        RiskConfig::default(),
+        StateStore::file(&d.join("oms_state.json")),
+        AuditLog::in_memory(),
+        filters(),
+    )
+    .unwrap();
     m.max_backoff_ms = 20;
     m
 }
@@ -37,8 +54,25 @@ fn mgr(name: &str, ex: MockExchange, policy: OrphanPolicy) -> OrderManager<MockE
 fn intent(side: Side, entry: Decimal, sl: Decimal, kind: EntryKind) -> EntryIntent {
     let f = filters()["ETHUSDT"].clone();
     let rc = RiskConfig::default();
-    let sizing = size_order(&SizingInput { side, entry, sl, kind, filters: &f, risk: &rc }).unwrap();
-    EntryIntent { symbol: "ETHUSDT".into(), strategy: "S1".into(), sizing, kind, ttl_ms: 3_600_000, cancel_beyond: None, knn_features: None, knn_signal_ms: None }
+    let sizing = size_order(&SizingInput {
+        side,
+        entry,
+        sl,
+        kind,
+        filters: &f,
+        risk: &rc,
+    })
+    .unwrap();
+    EntryIntent {
+        symbol: "ETHUSDT".into(),
+        strategy: "S1".into(),
+        sizing,
+        kind,
+        ttl_ms: 3_600_000,
+        cancel_beyond: None,
+        knn_features: None,
+        knn_signal_ms: None,
+    }
 }
 
 async fn pump(m: &mut OrderManager<MockExchange>, now: i64) {
@@ -53,7 +87,13 @@ async fn market_entry_filled_ack_places_sl_tp_algo() {
     ex.set_price("ETHUSDT", dec!(2500), T0);
     let mut m = mgr("mkt", ex, OrphanPolicy::PlaceSl);
     m.boot(T0).await.unwrap();
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     pump(&mut m, T0).await;
     let t = m.book.trades[&cid].clone();
     assert_eq!(t.state, TradeState::Open);
@@ -63,8 +103,13 @@ async fn market_entry_filled_ack_places_sl_tp_algo() {
     assert_eq!(m.ex.margin_of("ETHUSDT").as_deref(), Some("CROSSED"));
     let algos = m.ex.algos();
     assert_eq!(algos.len(), 2);
-    assert!(algos.iter().all(|a| a.close_position && a.qty.is_none() && a.side == "SELL" && a.client_algo_id.len() <= 36));
-    assert!(algos.iter().any(|a| a.kind == AlgoKind::StopMarket && a.trigger == t.sl));
+    assert!(algos.iter().all(|a| a.close_position
+        && a.qty.is_none()
+        && a.side == "SELL"
+        && a.client_algo_id.len() <= 36));
+    assert!(algos
+        .iter()
+        .any(|a| a.kind == AlgoKind::StopMarket && a.trigger == t.sl));
 }
 
 #[tokio::test]
@@ -73,7 +118,13 @@ async fn limit_gtx_ack_waits_for_fill_event() {
     ex.set_price("ETHUSDT", dec!(2510), T0);
     let mut m = mgr("lim", ex, OrphanPolicy::PlaceSl);
     m.boot(T0).await.unwrap();
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker),
+            T0,
+        )
+        .await
+        .unwrap();
     assert_eq!(m.book.trades[&cid].state, TradeState::PendingEntry);
     assert_eq!(m.ex.algo_count(), 0, "tidak boleh ada SL sebelum fill");
     m.ex.set_price("ETHUSDT", dec!(2499.5), T0 + 60_000);
@@ -88,7 +139,12 @@ async fn post_only_reject_is_dropped() {
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2490), T0);
     let mut m = mgr("gtx", ex, OrphanPolicy::PlaceSl);
-    let r = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker), T0).await;
+    let r = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker),
+            T0,
+        )
+        .await;
     assert!(r.is_err());
     assert_eq!(m.active().count(), 0);
 }
@@ -99,8 +155,18 @@ async fn market_ack_only_then_event() {
     ex.set_price("ETHUSDT", dec!(2500), T0);
     ex.knobs(|k| k.market_ack_only = true);
     let mut m = mgr("ack", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Short, dec!(2500), dec!(2560), EntryKind::Market), T0).await.unwrap();
-    assert_eq!(m.book.trades[&cid].state, TradeState::PendingEntry, "ACK NEW ≠ FILLED");
+    let cid = m
+        .submit(
+            intent(Side::Short, dec!(2500), dec!(2560), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        m.book.trades[&cid].state,
+        TradeState::PendingEntry,
+        "ACK NEW ≠ FILLED"
+    );
     pump(&mut m, T0).await;
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
     assert!(m.ex.algos().iter().all(|a| a.side == "BUY"));
@@ -111,7 +177,13 @@ async fn sl_trigger_closes_and_starts_cooldown() {
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2500), T0);
     let mut m = mgr("sl", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     pump(&mut m, T0).await;
     m.ex.set_price("ETHUSDT", dec!(2439), T0 + 900_000);
     pump(&mut m, T0 + 900_000).await;
@@ -132,7 +204,12 @@ async fn tp_trigger_closes_without_cooldown() {
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2500), T0);
     let mut m = mgr("tp", ex, OrphanPolicy::PlaceSl);
-    m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    m.submit(
+        intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+        T0,
+    )
+    .await
+    .unwrap();
     pump(&mut m, T0).await;
     m.ex.set_price("ETHUSDT", dec!(2700), T0 + 900_000);
     pump(&mut m, T0 + 900_000).await;
@@ -150,10 +227,21 @@ async fn sl_failure_flattens() {
     ex.set_price("ETHUSDT", dec!(2500), T0);
     ex.knobs(|k| k.fail_algo = 10);
     let mut m = mgr("slfail", ex, OrphanPolicy::PlaceSl);
-    m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    m.submit(
+        intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+        T0,
+    )
+    .await
+    .unwrap();
     pump(&mut m, T0).await;
-    assert!(m.ex.position("ETHUSDT").is_zero(), "posisi tanpa SL harus di-flatten");
-    assert_eq!(m.book.closed.last().unwrap().exit_kind, Some(ExitKind::StopLoss));
+    assert!(
+        m.ex.position("ETHUSDT").is_zero(),
+        "posisi tanpa SL harus di-flatten"
+    );
+    assert_eq!(
+        m.book.closed.last().unwrap().exit_kind,
+        Some(ExitKind::StopLoss)
+    );
     assert_eq!(m.book.risk.daily_sl_count, 1);
 }
 
@@ -166,13 +254,25 @@ async fn failed_flatten_keeps_position_and_kills() {
         k.fail_reduce_only = 1;
     });
     let mut m = mgr("unprot", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     let t = &m.book.trades[&cid];
     assert_eq!(t.state, TradeState::Unprotected);
     assert!(m.kill.is_engaged());
     assert!(!m.ex.position("ETHUSDT").is_zero());
     // entry baru diblokir kill switch
-    assert!(m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.is_err());
+    assert!(m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0
+        )
+        .await
+        .is_err());
     // tick berikut: exchange pulih → SL terpasang, posisi tetap terkelola
     m.tick(T0 + 5_000).await;
     let t = &m.book.trades[&cid];
@@ -185,14 +285,25 @@ async fn failed_manual_close_does_not_drop_position() {
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2500), T0);
     let mut m = mgr("close", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     pump(&mut m, T0).await;
     m.ex.knobs(|k| k.fail_reduce_only = 1);
-    assert!(m.close_trade(&cid, ExitKind::Manual, T0 + 1000).await.is_err());
+    assert!(m
+        .close_trade(&cid, ExitKind::Manual, T0 + 1000)
+        .await
+        .is_err());
     assert!(m.book.trades.contains_key(&cid));
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
     assert!(m.book.trades[&cid].sl_algo.is_some(), "SL tetap ada");
-    m.close_trade(&cid, ExitKind::Manual, T0 + 2000).await.unwrap();
+    m.close_trade(&cid, ExitKind::Manual, T0 + 2000)
+        .await
+        .unwrap();
     assert!(!m.book.trades.contains_key(&cid));
     assert_eq!(m.ex.algo_count(), 0);
 }
@@ -206,7 +317,11 @@ async fn reconcile_orphan_places_sl() {
     m.boot(T0).await.unwrap();
     let t = m.active().next().unwrap().clone();
     assert!(t.adopted && t.sl_algo.is_some());
-    let sl = m.ex.algos().into_iter().find(|a| a.kind == AlgoKind::StopMarket).unwrap();
+    let sl =
+        m.ex.algos()
+            .into_iter()
+            .find(|a| a.kind == AlgoKind::StopMarket)
+            .unwrap();
     assert_eq!(sl.trigger, dec!(2400.00)); // SL 4% (sl_max) dari entry
 }
 
@@ -227,7 +342,13 @@ async fn unknown_outcome_resolved_by_query() {
     ex.set_price("ETHUSDT", dec!(2500), T0);
     ex.knobs(|k| k.unknown_place = 1);
     let mut m = mgr("unk", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
     assert!(m.book.trades[&cid].sl_algo.is_some());
 }
@@ -238,7 +359,13 @@ async fn rate_limit_backoff_then_success() {
     ex.set_price("ETHUSDT", dec!(2500), T0);
     ex.knobs(|k| k.rate_limit = 2);
     let mut m = mgr("rl", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
     assert!(m.audit.count("RATE_LIMIT_BACKOFF") >= 2);
 }
@@ -248,26 +375,72 @@ async fn pending_ttl_expires_and_kill_blocks() {
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2510), T0);
     let mut m = mgr("ttl", ex, OrphanPolicy::PlaceSl);
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker), T0).await.unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker),
+            T0,
+        )
+        .await
+        .unwrap();
     m.tick(T0 + 3_600_001).await;
     assert!(!m.book.trades.contains_key(&cid));
     m.engage_kill("test", false, T0 + 3_700_000).await;
-    assert!(matches!(m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker), T0).await, Err(apex_oms::manager::OmsError::Killed)));
+    assert!(matches!(
+        m.submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker),
+            T0
+        )
+        .await,
+        Err(apex_oms::manager::OmsError::Killed)
+    ));
     m.kill.release().unwrap();
-    assert!(m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker), T0).await.is_ok());
+    assert!(m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker),
+            T0
+        )
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn state_persists_across_restart() {
     let d = tmpdir("persist");
-    let cfg = EngineConfig { kill_file: d.join("KILL"), ..Default::default() };
+    let cfg = EngineConfig {
+        kill_file: d.join("KILL"),
+        ..Default::default()
+    };
     let store = StateStore::file(&d.join("oms_state.json"));
     let ex = MockExchange::new(60.0);
     ex.set_price("ETHUSDT", dec!(2500), T0);
-    let mut m = OrderManager::new(ex, ExecMode::Paper, cfg.clone(), RiskConfig::default(), store.clone(), AuditLog::in_memory(), filters()).unwrap();
-    let cid = m.submit(intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market), T0).await.unwrap();
+    let mut m = OrderManager::new(
+        ex,
+        ExecMode::Paper,
+        cfg.clone(),
+        RiskConfig::default(),
+        store.clone(),
+        AuditLog::in_memory(),
+        filters(),
+    )
+    .unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
     let ex2 = m.ex;
-    let mut m2 = OrderManager::new(ex2, ExecMode::Paper, cfg, RiskConfig::default(), store, AuditLog::in_memory(), filters()).unwrap();
+    let mut m2 = OrderManager::new(
+        ex2,
+        ExecMode::Paper,
+        cfg,
+        RiskConfig::default(),
+        store,
+        AuditLog::in_memory(),
+        filters(),
+    )
+    .unwrap();
     assert_eq!(m2.book.trades[&cid].state, TradeState::Open);
     m2.reconcile(T0 + 1).await.unwrap();
     assert_eq!(m2.active().count(), 1, "tidak ada duplikasi saat reconcile");
@@ -275,8 +448,20 @@ async fn state_persists_across_restart() {
 
 #[test]
 fn non_paper_requires_arm() {
-    let cfg = EngineConfig { mode: apex_core::Mode::Testnet, arm: false, ..Default::default() };
-    let r = OrderManager::new(MockExchange::new(60.0), ExecMode::Testnet, cfg, RiskConfig::default(), StateStore::memory(), AuditLog::in_memory(), filters());
+    let cfg = EngineConfig {
+        mode: apex_core::Mode::Testnet,
+        arm: false,
+        ..Default::default()
+    };
+    let r = OrderManager::new(
+        MockExchange::new(60.0),
+        ExecMode::Testnet,
+        cfg,
+        RiskConfig::default(),
+        StateStore::memory(),
+        AuditLog::in_memory(),
+        filters(),
+    );
     assert!(r.is_err());
 }
 
@@ -290,15 +475,21 @@ async fn cancel_beyond_uses_closed_bar_and_preserves_fills() {
     let cid = m.submit(it, T0).await.unwrap();
     m.on_closed_price("ETHUSDT", dec!(2480), T0).await.unwrap();
     assert!(m.book.trades.contains_key(&cid));
-    m.on_closed_price("ETHUSDT", dec!(2490), T0 + 1).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2490), T0 + 1)
+        .await
+        .unwrap();
     assert!(m.book.trades.contains_key(&cid));
-    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2)
+        .await
+        .unwrap();
     assert!(!m.book.trades.contains_key(&cid));
     let mut it = intent(Side::Long, dec!(2500), dec!(2440), EntryKind::LimitMaker);
     it.cancel_beyond = Some(dec!(2490));
     let cid = m.submit(it, T0 + 3).await.unwrap();
     m.ex.set_price("ETHUSDT", dec!(2499), T0 + 4);
-    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 5).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 5)
+        .await
+        .unwrap();
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
     assert!(m.book.trades[&cid].sl_algo.is_some());
 }
@@ -311,10 +502,16 @@ async fn cancel_beyond_short_and_other_symbol() {
     let mut it = intent(Side::Short, dec!(2500), dec!(2560), EntryKind::LimitMaker);
     it.cancel_beyond = Some(dec!(2510));
     let cid = m.submit(it, T0).await.unwrap();
-    m.on_closed_price("BTCUSDT", dec!(2520), T0 + 1).await.unwrap();
-    m.on_closed_price("ETHUSDT", dec!(2510), T0 + 1).await.unwrap();
+    m.on_closed_price("BTCUSDT", dec!(2520), T0 + 1)
+        .await
+        .unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2510), T0 + 1)
+        .await
+        .unwrap();
     assert!(m.book.trades.contains_key(&cid));
-    m.on_closed_price("ETHUSDT", dec!(2520), T0 + 2).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2520), T0 + 2)
+        .await
+        .unwrap();
     assert!(!m.book.trades.contains_key(&cid));
 }
 
@@ -330,7 +527,9 @@ async fn cancel_beyond_cancels_unfilled_remainder_of_partial_entry() {
     m.ex.partial_fill(&cid, qty, T0 + 1);
     pump(&mut m, T0 + 1).await;
     assert_eq!(m.book.trades[&cid].state, TradeState::Open);
-    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2).await.unwrap();
+    m.on_closed_price("ETHUSDT", dec!(2480), T0 + 2)
+        .await
+        .unwrap();
     assert_eq!(m.book.trades[&cid].filled_qty, qty);
     assert!(m.book.trades[&cid].entry_final);
     assert!(m.book.trades[&cid].sl_algo.is_some());
@@ -347,10 +546,202 @@ async fn knn_features_survive_close_and_state_reload() {
     it.knn_features = Some([10., 20., 30., 40., 50.]);
     it.knn_signal_ms = Some(T0 - 900_000);
     let cid = m.submit(it, T0).await.unwrap();
-    m.close_trade(&cid, ExitKind::Manual, T0 + 1_000).await.unwrap();
-    let saved: apex_oms::manager::Book = StateStore::file(&m.cfg.state_dir.join("oms_state.json")).load().unwrap();
+    m.close_trade(&cid, ExitKind::Manual, T0 + 1_000)
+        .await
+        .unwrap();
+    let saved: apex_oms::manager::Book = StateStore::file(&m.cfg.state_dir.join("oms_state.json"))
+        .load()
+        .unwrap();
     let trade = saved.closed.last().unwrap();
     assert_eq!(trade.knn_features, Some([10., 20., 30., 40., 50.]));
     assert_eq!(trade.knn_signal_ms, Some(T0 - 900_000));
     assert!(trade.closed_ms.is_some());
+}
+
+// ---------------------------------------------------------------- WP-2 durability & persist-before-send
+
+#[tokio::test]
+async fn submit_tidak_memanggil_exchange_bila_persist_gagal() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    let mut m = mgr("persist-fail-submit", ex, OrphanPolicy::PlaceSl);
+    m.store.set_fail_saves(1);
+    let res = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await;
+    assert!(
+        matches!(res, Err(apex_oms::manager::OmsError::Store(_))),
+        "expected Store error, got {res:?}"
+    );
+    assert_eq!(
+        m.ex.calls().len(),
+        0,
+        "exchange tidak boleh dipanggil saat persist gagal"
+    );
+    assert_eq!(
+        m.active().count(),
+        0,
+        "PendingEntry di memori harus dibatalkan"
+    );
+    assert_eq!(m.audit.count("ENTRY_ABORTED_NO_PERSIST"), 1);
+    assert_eq!(m.audit.count("STATE_SAVE_ERROR"), 1);
+}
+
+#[tokio::test]
+async fn save_atomik_dan_roundtrip() {
+    let d = tmpdir("atomic-roundtrip");
+    let primary = d.join("oms_state.json");
+    let store = StateStore::file(&primary);
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    let cfg = EngineConfig {
+        kill_file: d.join("KILL"),
+        state_dir: d.clone(),
+        ..Default::default()
+    };
+    let mut m = OrderManager::new(
+        ex,
+        ExecMode::Paper,
+        cfg,
+        RiskConfig::default(),
+        store.clone(),
+        AuditLog::in_memory(),
+        filters(),
+    )
+    .unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    pump(&mut m, T0).await;
+    assert!(primary.exists(), "file utama harus ada");
+    assert!(
+        !StateStore::tmp_path(&primary).exists(),
+        "file tmp harus sudah di-rename"
+    );
+    assert!(
+        StateStore::bak_path(&primary).exists(),
+        "file .bak harus ada setelah ≥2 kali save"
+    );
+    let loaded: apex_oms::manager::Book = store.load().unwrap();
+    assert_eq!(loaded.trades[&cid].state, TradeState::Open);
+}
+
+#[tokio::test]
+async fn pulih_dari_bak_bila_utama_korup() {
+    let d = tmpdir("recover-bak");
+    let primary = d.join("oms_state.json");
+    let store = StateStore::file(&primary);
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    let cfg = EngineConfig {
+        kill_file: d.join("KILL"),
+        state_dir: d.clone(),
+        ..Default::default()
+    };
+    let mut m = OrderManager::new(
+        ex,
+        ExecMode::Paper,
+        cfg.clone(),
+        RiskConfig::default(),
+        store.clone(),
+        AuditLog::in_memory(),
+        filters(),
+    )
+    .unwrap();
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    pump(&mut m, T0).await;
+    // Save tambahan via tick agar salinan terakhir dengan state Open juga tersalin ke .json.bak
+    m.tick(T0 + 1_000).await;
+
+    // 1. Korupsi file utama -> pulih dari .bak + audit STATE_RECOVERED_FROM_BAK
+    std::fs::write(&primary, b"{corrupt json").unwrap();
+    let audit1 = AuditLog::in_memory();
+    let m_corrupt = OrderManager::new(
+        MockExchange::new(60.0),
+        ExecMode::Paper,
+        cfg.clone(),
+        RiskConfig::default(),
+        store.clone(),
+        audit1,
+        filters(),
+    )
+    .unwrap();
+    assert_eq!(m_corrupt.book.trades[&cid].state, TradeState::Open);
+    assert_eq!(m_corrupt.audit.count("STATE_RECOVERED_FROM_BAK"), 1);
+
+    // 2. Hapus file utama -> pulih dari .bak + audit STATE_RECOVERED_FROM_BAK
+    std::fs::remove_file(&primary).unwrap();
+    let audit2 = AuditLog::in_memory();
+    let m_missing = OrderManager::new(
+        MockExchange::new(60.0),
+        ExecMode::Paper,
+        cfg,
+        RiskConfig::default(),
+        store,
+        audit2,
+        filters(),
+    )
+    .unwrap();
+    assert_eq!(m_missing.book.trades[&cid].state, TradeState::Open);
+    assert_eq!(m_missing.audit.count("STATE_RECOVERED_FROM_BAK"), 1);
+}
+
+#[test]
+fn fixture_state_lama_tetap_terbaca() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("oms_state_v0.json");
+    let loaded: apex_oms::manager::Book = StateStore::file(&fixture).load().unwrap();
+    assert_eq!(loaded.closed.len(), 1);
+    assert_eq!(
+        loaded
+            .trades
+            .values()
+            .filter(|t| t.state == TradeState::Open)
+            .count(),
+        1
+    );
+    assert_eq!(
+        loaded
+            .trades
+            .values()
+            .filter(|t| t.state == TradeState::PendingEntry)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn tiga_kegagalan_berturut_memicu_kill() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    let mut m = mgr("three-save-fails", ex, OrphanPolicy::PlaceSl);
+    m.store.set_fail_saves(3);
+    m.tick(T0 + 1_000).await;
+    assert!(!m.kill.is_engaged());
+    assert_eq!(m.consecutive_save_failures, 1);
+    m.tick(T0 + 2_000).await;
+    assert!(!m.kill.is_engaged());
+    assert_eq!(m.consecutive_save_failures, 2);
+    m.tick(T0 + 3_000).await;
+    assert!(
+        m.kill.is_engaged(),
+        "3 kegagalan simpan berturut-turut wajib mengaktifkan kill switch"
+    );
+    assert_eq!(m.kill.reason().as_deref(), Some("STATE_SAVE_FAILED"));
+    assert_eq!(m.audit.count("KILL_ENGAGED"), 1);
 }
