@@ -1,0 +1,44 @@
+[Unit]
+Description=Apex Scalper RS Trading Engine (Binance USD-M Futures)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=apex
+Group=apex
+WorkingDirectory=/opt/apex
+
+# File konfigurasi kredensial (BINANCE_API_KEY, BINANCE_API_SECRET, APEX_NOTIFY_URL)
+# Wajib disetel hak akses: chmod 0600 /etc/apex/apex.env; chown apex:apex /etc/apex/apex.env
+EnvironmentFile=/etc/apex/apex.env
+
+# DEFAULT AMAN: mode=paper (simulasi lokal tanpa order).
+# PERINGATAN: Mengubah --mode ke testnet atau live HANYA boleh dilakukan oleh manusia
+# setelah seluruh daftar centang docs/id/05-go-live-checklist.md disetujui dan ditandatangani.
+ExecStart=/opt/apex/bin/apex --config /etc/apex/config run --mode paper
+
+# Pengawasan dan pemulihan otomatis
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# Batasan keamanan proses & filesystem Linux (Least Privilege)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictRealtime=true
+
+# Hanya direktori state dan audit yang diizinkan untuk penulisan
+ReadWritePaths=/var/lib/apex/state /var/lib/apex/audit
+
+# Batas file descriptor untuk koneksi WebSocket & REST
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
