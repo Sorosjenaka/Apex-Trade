@@ -33,28 +33,10 @@ pub fn check_c01_env(inp: &PreflightInput) -> PreflightCheck {
     if inp.target == PreflightTarget::Live && !inp.env.live_confirm_matches {
         missing.push(LIVE_CONFIRM_ENV);
     }
+    let m = |b: bool| if b { "<masked>" } else { "<unset>" };
     let summary = format!(
         "{KEY_ENV}={} {SECRET_ENV}={} {LIVE_CONFIRM_ENV}={} {NOTIFY_URL_ENV}={}",
-        if inp.env.api_key_set {
-            "<masked>"
-        } else {
-            "<unset>"
-        },
-        if inp.env.api_secret_set {
-            "<masked>"
-        } else {
-            "<unset>"
-        },
-        if inp.env.live_confirm_set {
-            "<masked>"
-        } else {
-            "<unset>"
-        },
-        if inp.env.notify_url_set {
-            "<masked>"
-        } else {
-            "<unset>"
-        },
+        m(inp.env.api_key_set), m(inp.env.api_secret_set), m(inp.env.live_confirm_set), m(inp.env.notify_url_set)
     );
     if missing.is_empty() {
         chk("C1", "Variabel environment", CheckVerdict::Pass, summary)
@@ -331,28 +313,24 @@ pub async fn check_c06_api_restrictions<B: PreflightBackend>(
 }
 
 pub async fn check_c07_account_mode<B: PreflightBackend>(backend: &B) -> PreflightCheck {
+    let t = "Mode akun (one-way & single-asset)";
     match backend.account_mode().await {
         Ok(m) if !m.dual_side_position && !m.multi_assets_margin => chk(
             "C7",
-            "Mode akun (one-way & single-asset)",
+            t,
             CheckVerdict::Pass,
             "dualSidePosition=false (one-way) & multiAssetsMargin=false (single-asset)".into(),
         ),
         Ok(m) => chk(
             "C7",
-            "Mode akun (one-way & single-asset)",
+            t,
             CheckVerdict::Fail,
             format!(
                 "mode akun salah: dualSidePosition={} (wajib false), multiAssetsMargin={} (wajib false)",
                 m.dual_side_position, m.multi_assets_margin
             ),
         ),
-        Err(e) => chk(
-            "C7",
-            "Mode akun (one-way & single-asset)",
-            CheckVerdict::Fail,
-            format!("gagal membaca mode akun: {e}"),
-        ),
+        Err(e) => chk("C7", t, CheckVerdict::Fail, format!("gagal membaca mode akun: {e}")),
     }
 }
 
@@ -584,19 +562,15 @@ pub async fn check_c11_commission_rates<B: PreflightBackend>(
 }
 
 pub async fn check_c12_listen_key<B: PreflightBackend>(backend: &B) -> PreflightCheck {
+    let t = "Siklus hidup listenKey (POST + DELETE)";
     match backend.probe_listen_key().await {
         Ok(()) => chk(
             "C12",
-            "Siklus hidup listenKey (POST + DELETE)",
+            t,
             CheckVerdict::Pass,
             "listenKey berhasil dibuat (nilai dimasker) dan langsung dihapus".into(),
         ),
-        Err(e) => chk(
-            "C12",
-            "Siklus hidup listenKey (POST + DELETE)",
-            CheckVerdict::Fail,
-            format!("gagal membuat/menghapus listenKey: {e}"),
-        ),
+        Err(e) => chk("C12", t, CheckVerdict::Fail, format!("gagal membuat/menghapus listenKey: {e}")),
     }
 }
 
