@@ -994,3 +994,119 @@ async fn notifier_merekam_event_penting_tanpa_http() {
     m.shutdown(T0 + 3_000);
     assert_eq!(rec.count_event("SHUTDOWN"), 1);
 }
+
+fn mk_15m_bar(open_time: i64, high: f64, low: f64, close: f64) -> apex_core::Bar {
+    apex_core::Bar {
+        open_time,
+        open: 2500.0,
+        high,
+        low,
+        close,
+        volume: 10.0,
+        quote_volume: 25_000.0,
+        trades: 5,
+        taker_buy_base: 5.0,
+    }
+}
+
+#[tokio::test]
+async fn telemetri_wp5_roundtrip_dan_kompatibilitas_fixture_v0() {
+    let raw_v0 = std::fs::read_to_string("tests/fixtures/oms_state_v0.json").unwrap();
+    let legacy_book: apex_oms::manager::Book = serde_json::from_str(&raw_v0).unwrap();
+    assert!(legacy_book.closed[0].entry_ctx.is_none());
+
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2505), T0);
+    let mut m = mgr("wp5-telemetry", ex, OrphanPolicy::PlaceSl);
+    m.boot(T0).await.unwrap();
+    let ctx = EntryContext {
+        spread_bps: Some(dec!(1.4)),
+        planned_slip_bps: dec!(2.0),
+        regime_label: "TREND_UP".into(),
+        config_hash: "deadbeefcafebabe".into(),
+        signal_ts: T0,
+        planned_entry: dec!(2500),
+        planned_sl: dec!(2425),
+        planned_tp: dec!(2650),
+        ..Default::default()
+    };
+    let it = intent(Side::Long, dec!(2500), dec!(2425), EntryKind::LimitMaker);
+    let cid = m.submit_with_ctx(it, Some(ctx), T0).await.unwrap();
+    m.ex.set_price("ETHUSDT", dec!(2499.90), T0 + 10_000);
+    pump(&mut m, T0 + 10_000).await;
+    m.ex.set_price("ETHUSDT", dec!(2425.00), T0 + 1_810_000);
+    pump(&mut m, T0 + 1_810_000).await;
+
+    let bars = vec![
+        mk_15m_bar(T0, 2900.0, 2100.0, 2500.0),
+        mk_15m_bar(T0 + 900_000, 2560.0, 2425.0, 2425.0),
+    ];
+    let tel = build_trade_telemetry(m.book.closed.last().unwrap(), &m.risk_cfg, m.mode, &bars);
+    assert_eq!((tel.schema, tel.trade_id.as_str()), (1, cid.as_str()));
+    assert_eq!(tel.exit_kind, TelemetryExitKind::SlHit);
+    assert!(tel.fills.paper_slip_zero_by_construction);
+    let exc = tel.excursion.as_ref().unwrap();
+    assert_eq!(
+        (exc.bars_in_trade, exc.mfe_r, exc.mae_r),
+        (1, dec!(0.8), dec!(1))
+    );
+
+    let out_p = tmpdir("wp5-jsonl").join("trades_telemetry.jsonl");
+    append_jsonl_record(&out_p, &tel).unwrap();
+    assert_eq!(read_telemetry_jsonl(&out_p).unwrap(), vec![tel]);
+}
+
+#[test]
+fn telemetry_golden_single_line_snapshot() {
+    let rec = TradeTelemetry {
+        schema: 1,
+        trade_id: "apxS1-ETH-abc-1".into(),
+        symbol: "ETHUSDT".into(),
+        strategy: "S1".into(),
+        validated: true,
+        side: Side::Long,
+        created_ms: 1_700_000_000_000,
+        filled_ms: Some(1_700_000_010_000),
+        fill_confirmed_at: Some(1_700_000_010_000),
+        sl_placed_ms: Some(1_700_000_010_180),
+        unprotected_ms: Some(180),
+        closed_ms: 1_700_001_800_000,
+        entry_price: dec!(2500.00),
+        exit_price: dec!(2449.50),
+        planned_risk_usd: dec!(0.9850),
+        pnl_net_usd: dec!(-1.012000),
+        r_multiple: dec!(-1.0274),
+        exit_kind: TelemetryExitKind::SlHit,
+        entry_ctx: None,
+        excursion: Some(TradeExcursion {
+            mfe_r: dec!(0.8000),
+            mae_r: dec!(1.0100),
+            bars_in_trade: 2,
+            mfe_ts: Some(1_700_000_900_000),
+            mae_ts: Some(1_700_001_800_000),
+            resolution: "15m_closed_bar".into(),
+        }),
+        fills: FillSummary {
+            entry_slip_bps: dec!(0.0000),
+            exit_slip_bps: dec!(2.0408),
+            model_slip_r: dec!(0.0099),
+            realized_slip_r: dec!(0.0102),
+            fee_usd: dec!(0.024750),
+            funding_usd: dec!(0.000000),
+            maker_entry: true,
+            source: ExecSource::Demo,
+            paper_slip_zero_by_construction: false,
+        },
+    };
+    let line = serde_json::to_string(&rec).unwrap();
+    assert!(!line.contains('\n'));
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        (v["schema"].as_u64(), v["exit_kind"].as_str()),
+        (Some(1), Some("SlHit"))
+    );
+    assert_eq!(
+        (v["fills"]["source"].as_str(), v["unprotected_ms"].as_i64()),
+        (Some("demo"), Some(180))
+    );
+}

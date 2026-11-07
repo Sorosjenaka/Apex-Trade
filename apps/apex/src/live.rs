@@ -739,6 +739,77 @@ async fn recv_user_ev(
     }
 }
 
+fn compute_all_config_hash(cfg: &AllConfig) -> String {
+    apex_oms::compute_config_hash(&serde_json::json!({
+        "risk": &cfg.risk,
+        "screener": &cfg.screener,
+        "strategies": &cfg.strategies,
+    }))
+}
+
+struct PostTradeSync<'a> {
+    seen_closed: &'a mut usize,
+    last_m15: &'a BTreeMap<String, Vec<Bar>>,
+    trend_flip_guard: &'a mut apex_oms::TrendFlipConfirmationGuard,
+    yahudi_cooldown: &'a mut apex_oms::YahudiCooldownGuard,
+    playbook: &'a mut apex_oms::PlaybookEngine,
+}
+
+fn sync_closed_trades<E: FuturesExchange>(
+    cfg: &AllConfig,
+    mgr: &OrderManager<E>,
+    st: &mut PostTradeSync<'_>,
+    now: Ms,
+) {
+    while *st.seen_closed < mgr.book.closed.len() {
+        let ct = mgr.book.closed[*st.seen_closed].clone();
+        *st.seen_closed += 1;
+        st.trend_flip_guard.clear(&ct.symbol, ct.side);
+        let bars_15m = st
+            .last_m15
+            .get(&ct.symbol)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let tel = apex_oms::build_trade_telemetry(&ct, &cfg.risk, mgr.mode, bars_15m);
+        let _ = apex_oms::append_jsonl_record(Path::new("audit/trades_telemetry.jsonl"), &tel);
+        let pnl = ct.pnl_net.unwrap_or(0.0);
+        let reason = tel.exit_kind.as_str().to_string();
+        let closed_ts = ct.closed_ms.unwrap_or(now);
+        let hold_ms = closed_ts.saturating_sub(ct.filled_ms.unwrap_or(ct.created_ms));
+        let sl_pct = if ct.entry_price > rust_decimal::Decimal::ZERO {
+            to_f64((ct.entry_price - ct.sl).abs() / ct.entry_price)
+        } else {
+            0.02
+        };
+        st.yahudi_cooldown
+            .on_trade_closed(&ct.symbol, closed_ts, pnl, &reason, cfg.risk.risk_usd);
+        let mistake =
+            apex_oms::classify_trade_mistake(pnl, hold_ms, 0.0003, 0.0, true, 50.0, sl_pct);
+        st.playbook.record_mistake(mistake);
+        let (mfe_r, mae_r) = tel
+            .excursion
+            .as_ref()
+            .map(|e| (to_f64(e.mfe_r), to_f64(e.mae_r)))
+            .unwrap_or((0.0, 0.0));
+        let five_whys = apex_oms::generate_five_whys_forensics(
+            &ct.symbol,
+            &ct.strategy,
+            pnl,
+            to_f64(tel.r_multiple),
+            mfe_r,
+            mae_r,
+            mistake.as_str(),
+        );
+        mgr.audit.log(closed_ts, "YAHUDI_POST_TRADE", serde_json::json!({
+            "symbol": ct.symbol, "strategy": ct.strategy, "pnl_net": pnl, "close_reason": reason,
+            "mistake_tag": mistake.as_str(), "five_whys": five_whys,
+            "global_cooldown_until_ms": st.yahudi_cooldown.global_cooldown_until_ms,
+            "global_cooldown_reason": st.yahudi_cooldown.global_cooldown_reason,
+            "tripwire_triggered": st.yahudi_cooldown.tripwire_triggered,
+        }));
+    }
+}
+
 async fn run_loop<E: FuturesExchange + Feed>(
     cfg: &AllConfig,
     mut mgr: OrderManager<E>,
@@ -769,6 +840,7 @@ async fn run_loop<E: FuturesExchange + Feed>(
     let mut playbook = apex_oms::PlaybookEngine::default();
     let mut trend_flip_guard = apex_oms::TrendFlipConfirmationGuard::default();
     let mut rate_guard = apex_oms::BinanceRateGuard::default();
+    let mut last_m15_by_symbol: BTreeMap<String, Vec<Bar>> = BTreeMap::new();
     let mut seen_closed = mgr.book.closed.len();
     let mut last_close: Ms = 0;
     let mut last_meta = now;
@@ -803,63 +875,18 @@ async fn run_loop<E: FuturesExchange + Feed>(
             }
         }
         mgr.tick(now).await;
-        // Sinkronisasi penutupan posisi baru ke Yahudi Cooldown Guard, Playbook Mistake Classifier & 5-Whys Forensics
-        while seen_closed < mgr.book.closed.len() {
-            let ct = mgr.book.closed[seen_closed].clone();
-            seen_closed += 1;
-            trend_flip_guard.clear(&ct.symbol, ct.side);
-            let pnl = ct.pnl_net.unwrap_or(0.0);
-            let close_reason = ct
-                .exit_kind
-                .map(|k| format!("{k:?}"))
-                .unwrap_or_else(|| "MANUAL".to_string());
-            let closed_ts = ct.closed_ms.unwrap_or(now);
-            let hold_ms = closed_ts.saturating_sub(ct.filled_ms.unwrap_or(ct.created_ms));
-            let sl_pct = if ct.entry_price > rust_decimal::Decimal::ZERO {
-                to_f64((ct.entry_price - ct.sl).abs() / ct.entry_price)
-            } else {
-                0.02
-            };
-            yahudi_cooldown.on_trade_closed(
-                &ct.symbol,
-                closed_ts,
-                pnl,
-                &close_reason,
-                cfg.risk.risk_usd,
-            );
-            let mistake =
-                apex_oms::classify_trade_mistake(pnl, hold_ms, 0.0003, 0.0, true, 50.0, sl_pct);
-            playbook.record_mistake(mistake);
-            let r_mult = if cfg.risk.risk_usd > 0.0 {
-                pnl / cfg.risk.risk_usd
-            } else {
-                0.0
-            };
-            let five_whys = apex_oms::generate_five_whys_forensics(
-                &ct.symbol,
-                &ct.strategy,
-                pnl,
-                r_mult,
-                r_mult.max(0.0),
-                (-r_mult).max(0.0),
-                mistake.as_str(),
-            );
-            mgr.audit.log(
-                closed_ts,
-                "YAHUDI_POST_TRADE",
-                serde_json::json!({
-                    "symbol": ct.symbol,
-                    "strategy": ct.strategy,
-                    "pnl_net": pnl,
-                    "close_reason": close_reason,
-                    "mistake_tag": mistake.as_str(),
-                    "five_whys": five_whys,
-                    "global_cooldown_until_ms": yahudi_cooldown.global_cooldown_until_ms,
-                    "global_cooldown_reason": yahudi_cooldown.global_cooldown_reason,
-                    "tripwire_triggered": yahudi_cooldown.tripwire_triggered,
-                }),
-            );
-        }
+        sync_closed_trades(
+            cfg,
+            &mgr,
+            &mut PostTradeSync {
+                seen_closed: &mut seen_closed,
+                last_m15: &last_m15_by_symbol,
+                trend_flip_guard: &mut trend_flip_guard,
+                yahudi_cooldown: &mut yahudi_cooldown,
+                playbook: &mut playbook,
+            },
+            now,
+        );
         if !paper
             && now - last_reconcile
                 > if user_sup.as_ref().is_some_and(|s| s.handle.is_finished()) {
@@ -917,6 +944,7 @@ async fn run_loop<E: FuturesExchange + Feed>(
                 &mut playbook,
                 &mut trend_flip_guard,
                 &mut rate_guard,
+                &mut last_m15_by_symbol,
                 stream_entry_blocked,
                 now,
                 siklus,
@@ -925,6 +953,18 @@ async fn run_loop<E: FuturesExchange + Feed>(
             {
                 eprintln!("{} siklus {} gagal: {e}", fmt_utc(now), entry_tf.binance());
             }
+            sync_closed_trades(
+                cfg,
+                &mgr,
+                &mut PostTradeSync {
+                    seen_closed: &mut seen_closed,
+                    last_m15: &last_m15_by_symbol,
+                    trend_flip_guard: &mut trend_flip_guard,
+                    yahudi_cooldown: &mut yahudi_cooldown,
+                    playbook: &mut playbook,
+                },
+                now,
+            );
             if once {
                 mgr.shutdown(now_ms());
                 break;
@@ -1193,10 +1233,12 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
     playbook: &mut apex_oms::PlaybookEngine,
     trend_flip_guard: &mut apex_oms::TrendFlipConfirmationGuard,
     rate_guard: &mut apex_oms::BinanceRateGuard,
+    last_m15_by_symbol: &mut BTreeMap<String, Vec<Bar>>,
     stream_entry_blocked: bool,
     now: Ms,
     siklus: u64,
 ) -> anyhow::Result<()> {
+    let config_hash = compute_all_config_hash(cfg);
     let universe = cfg.universe();
     let entry_tf = if cfg.strategies.research_entry_5m {
         Tf::M5
@@ -1211,6 +1253,9 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         now,
     );
     let snap = snapshot_with_cfg(pc, &cfg.engine.data_dir, &universe, want_5m, now).await?;
+    for (sym, m15, _) in &snap.syms {
+        last_m15_by_symbol.insert(sym.clone(), m15.clone());
+    }
     let Some(dec) = decide_with_chop(&snap, cfg.screener.chop) else {
         anyhow::bail!("regime: data kurang")
     };
@@ -1350,6 +1395,10 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                             "exit_action": exit_action,
                             "confirmed_2_readings": confirmed_2_readings,
                         }),
+                    );
+                    mgr.set_telemetry_exit(
+                        &open_tr.client_id,
+                        apex_oms::TelemetryExitKind::TrendFlip,
                     );
                     let _ = mgr
                         .close_trade(&open_tr.client_id, apex_core::risk::ExitKind::Manual, now)
@@ -1581,6 +1630,7 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         let mut s1_sized = None;
         let mut s1_stop: Option<&'static str> = None;
         for (mut sig, ofcc_confirmed) in candidates {
+            let mut cand_council_summary: Option<apex_oms::CouncilSummary> = None;
             let is_s1 = sig.strategy == apex_strategies::StrategyId::S1Tfp;
             if is_s1 {
                 s1_cand_side = Some(sig.side);
@@ -1696,6 +1746,14 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         skip("ARTATRADE_COUNCIL_REJECT");
                         continue;
                     }
+                    cand_council_summary = Some(apex_oms::CouncilSummary {
+                        action: council.final_action.to_string(),
+                        enforced: council.enforced,
+                        inputs_defaulted: inputs_defaulted
+                            .iter()
+                            .map(|s| (*s).to_string())
+                            .collect(),
+                    });
                     // Bila Wardha memilih varian SL "B" (struktural + buffer ATR), gunakan harga SL B
                     if council.sl_choice == "B" {
                         if let Some(ref menu) = sl_menu {
@@ -1860,6 +1918,36 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                     if is_s1 {
                         s1_stop = Some("signal");
                     }
+                    let entry_ctx = apex_oms::EntryContext {
+                        spread_bps: gm.spread_bps.map(|v| to_dec(v).round_dp(4)),
+                        planned_slip_bps: (to_dec(cfg.risk.slip_sl)
+                            * rust_decimal::Decimal::from(10_000))
+                        .round_dp(4),
+                        cvd_aligned: yh_trace.as_ref().map(|tr| match sig.side {
+                            Side::Long => tr.cvd_aligned_long,
+                            Side::Short => tr.cvd_aligned_short,
+                        }),
+                        chop: yh_trace.as_ref().map(|tr| tr.chop_14),
+                        adx: yh_trace.as_ref().map(|tr| tr.adx_14),
+                        atr_pct: yh_trace.as_ref().and_then(|tr| {
+                            (sig.entry > 0.0 && tr.atr_14 > 0.0).then_some(tr.atr_14 / sig.entry)
+                        }),
+                        regime_label: if is_yahudi {
+                            yh_trace
+                                .as_ref()
+                                .map(|tr| tr.regime_state.clone())
+                                .unwrap_or_else(|| state.as_str().to_string())
+                        } else {
+                            dec.state.as_str().to_string()
+                        },
+                        macro_bias: macro_gate.macro_bias.clone(),
+                        council: cand_council_summary,
+                        config_hash: config_hash.clone(),
+                        signal_ts: sig.bar_close_ms,
+                        planned_entry: sz.entry,
+                        planned_sl: sz.sl,
+                        planned_tp: sz.tp,
+                    };
                     let it = EntryIntent {
                         symbol: sym.clone(),
                         strategy: sig.strategy.code().to_string(),
@@ -1870,7 +1958,7 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         knn_features: features,
                         knn_signal_ms: features.map(|_| sig.bar_close_ms),
                     };
-                    match mgr.submit(it, now).await {
+                    match mgr.submit_with_ctx(it, Some(entry_ctx), now).await {
                         Ok(cid) => println!(
                             "  ENTRY {} {} {:?} cid={cid}",
                             sig.strategy.code(),

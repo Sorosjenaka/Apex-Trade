@@ -84,6 +84,8 @@ pub struct ManagedTrade {
     pub unknown_attempts: u8,
     #[serde(default)]
     pub fill_confirmed_at: Option<Ms>,
+    #[serde(default)]
+    pub sl_placed_ms: Option<Ms>,
     #[serde(default = "default_true")]
     pub validated: bool,
     pub filled_ms: Option<Ms>,
@@ -91,7 +93,17 @@ pub struct ManagedTrade {
     pub exit_price: Option<Decimal>,
     pub exit_kind: Option<ExitKind>,
     pub exit_hint: Option<ExitKind>,
+    #[serde(default)]
+    pub telemetry_exit: Option<crate::telemetry::TelemetryExitKind>,
+    #[serde(default)]
+    pub entry_ctx: Option<crate::telemetry::EntryContext>,
+    #[serde(default)]
+    pub excursion: Option<crate::telemetry::TradeExcursion>,
+    #[serde(default)]
+    pub fills: Option<crate::telemetry::FillSummary>,
     pub fees: Decimal,
+    #[serde(default)]
+    pub funding_usd: Decimal,
     pub pnl_net: Option<f64>,
     pub close_attempts: u32,
     pub protect_attempts: u32,
@@ -370,7 +382,22 @@ impl<E: FuturesExchange> OrderManager<E> {
         Ok(())
     }
 
+    pub fn set_telemetry_exit(&mut self, cid: &str, kind: crate::telemetry::TelemetryExitKind) {
+        if let Some(tr) = self.book.trades.get_mut(cid) {
+            tr.telemetry_exit = Some(kind);
+        }
+    }
+
     pub async fn submit(&mut self, it: EntryIntent, now: Ms) -> Result<String, OmsError> {
+        self.submit_with_ctx(it, None, now).await
+    }
+
+    pub async fn submit_with_ctx(
+        &mut self,
+        it: EntryIntent,
+        entry_ctx: Option<crate::telemetry::EntryContext>,
+        now: Ms,
+    ) -> Result<String, OmsError> {
         if self.kill.is_engaged() {
             return Err(OmsError::Killed);
         }
@@ -408,13 +435,19 @@ impl<E: FuturesExchange> OrderManager<E> {
             unknown_since_ms: None,
             unknown_attempts: 0,
             fill_confirmed_at: None,
+            sl_placed_ms: None,
             validated,
             filled_ms: None,
             closed_ms: None,
             exit_price: None,
             exit_kind: None,
             exit_hint: None,
+            telemetry_exit: None,
+            entry_ctx,
+            excursion: None,
+            fills: None,
             fees: Decimal::ZERO,
+            funding_usd: Decimal::ZERO,
             pnl_net: None,
             close_attempts: 0,
             protect_attempts: 0,
@@ -816,6 +849,8 @@ impl<E: FuturesExchange> OrderManager<E> {
                 Some(id) => {
                     if let Some(tr) = self.book.trades.get_mut(cid) {
                         tr.sl_algo = Some(id);
+                        tr.sl_placed_ms
+                            .get_or_insert(confirm_base + elapsed_confirm_ms);
                         tr.state = TradeState::Open;
                         tr.last_error = None;
                     }
@@ -831,6 +866,10 @@ impl<E: FuturesExchange> OrderManager<E> {
                         now,
                         "SL_FAILED",
                         json!({"cid": cid, "err": last, "would_trigger": would_trigger, "elapsed_ms": elapsed_confirm_ms}),
+                    );
+                    self.set_telemetry_exit(
+                        cid,
+                        crate::telemetry::TelemetryExitKind::FlattenProtect,
                     );
                     // GR-8 / FR-019: gagal pasang SL atau >5 dtk → flatten reduceOnly + engage_kill
                     if let Err(e) = self.close_trade(cid, ExitKind::StopLoss, now).await {
@@ -1083,6 +1122,16 @@ impl<E: FuturesExchange> OrderManager<E> {
         t.exit_price = Some(px);
         t.exit_kind = Some(kind);
         t.pnl_net = Some(pnl);
+        let tel_exit = t
+            .telemetry_exit
+            .unwrap_or_else(|| crate::telemetry::TelemetryExitKind::from_oms_exit(Some(kind)));
+        t.telemetry_exit = Some(tel_exit);
+        t.fills = Some(crate::telemetry::compute_fill_summary(
+            &t,
+            tel_exit,
+            &self.risk_cfg,
+            self.mode,
+        ));
         let was_daily_stop = self.book.risk.daily_stop_active(ts, &self.risk_cfg);
         self.book.risk.record_exit(kind, pnl, ts, &self.risk_cfg);
         let now_daily_stop = self.book.risk.daily_stop_active(ts, &self.risk_cfg);
@@ -1244,6 +1293,10 @@ impl<E: FuturesExchange> OrderManager<E> {
                 }
                 TradeState::Open | TradeState::Unprotected => {
                     if flatten {
+                        self.set_telemetry_exit(
+                            &cid,
+                            crate::telemetry::TelemetryExitKind::FlattenKill,
+                        );
                         let _ = self.close_trade(&cid, ExitKind::Manual, now).await;
                     } else if t.sl_algo.is_none()
                         || t.tp_algo.is_none()
@@ -1292,6 +1345,7 @@ impl<E: FuturesExchange> OrderManager<E> {
             if st == TradeState::PendingEntry {
                 let _ = self.cancel_entry(&cid, now).await;
             } else if flatten && matches!(st, TradeState::Open | TradeState::Unprotected) {
+                self.set_telemetry_exit(&cid, crate::telemetry::TelemetryExitKind::FlattenKill);
                 let _ = self.close_trade(&cid, ExitKind::Manual, now).await;
             }
         }
@@ -1435,13 +1489,19 @@ impl<E: FuturesExchange> OrderManager<E> {
                         unknown_since_ms: None,
                         unknown_attempts: 0,
                         fill_confirmed_at: Some(now),
+                        sl_placed_ms: None,
                         validated: false,
                         filled_ms: Some(now),
                         closed_ms: None,
                         exit_price: None,
                         exit_kind: None,
                         exit_hint: None,
+                        telemetry_exit: None,
+                        entry_ctx: None,
+                        excursion: None,
+                        fills: None,
                         fees: Decimal::ZERO,
+                        funding_usd: Decimal::ZERO,
                         pnl_net: None,
                         close_attempts: 0,
                         protect_attempts: 0,

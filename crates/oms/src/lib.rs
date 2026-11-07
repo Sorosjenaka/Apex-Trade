@@ -25,6 +25,7 @@ pub mod notifier;
 pub mod safety;
 pub mod store;
 pub mod supervision;
+pub mod telemetry;
 pub mod types;
 pub mod userstream;
 pub mod yahudi_exec;
@@ -36,5 +37,6 @@ pub use notifier::{HttpWebhookNotifier, NoopNotifier, Notifier, NotifyPayload, R
 pub use safety::{authorize, ExecMode, SafetyError};
 pub use store::{LoadOutcome, StateStore, StoreError};
 pub use supervision::{RestartablePublicSupervisor, Supervised, TaskHealth};
+pub use telemetry::*;
 pub use types::*;
 pub use yahudi_exec::*;
