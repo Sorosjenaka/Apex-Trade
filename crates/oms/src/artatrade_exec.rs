@@ -20,15 +20,12 @@ fn side_str(side: Side) -> &'static str {
     }
 }
 
-// ─────────────────────── 1. Structural Risk Sizing, Fixed Risk Levels & SL/TP Menu ───────────────────────
+// ─────────────────────── 1. SL/TP Menu & Ladder Proyeksi (sizing nyata di crates/core/src/sizing.rs) ───────────────────────
 
-pub const DEFAULT_RISK_USD: f64 = 1.00;
 pub const SCALP_TP1_R: f64 = 1.70;
 pub const SCALP_SL_BAND_MIN: f64 = 0.02; // 2%
 pub const SCALP_SL_BAND_MAX: f64 = 0.04; // 4%
 pub const SCALP_SL_BUFFER_ATR: f64 = 0.46;
-pub const SCALP_MAX_MARGIN_USD: f64 = 4.80;
-pub const MAX_LEVERAGE_SYSTEM: u32 = 25;
 
 fn quantize_step_floor(val: f64, step: f64) -> f64 {
     if !(step > 0.0) {
@@ -36,154 +33,6 @@ fn quantize_step_floor(val: f64, step: f64) -> f64 {
     }
     let steps = (val / step + 1e-9).floor();
     ((steps * step) * 1e8).round() / 1e8
-}
-
-fn round_to_tick(val: f64, tick: f64) -> f64 {
-    if !(tick > 0.0) {
-        return val;
-    }
-    let steps = (val / tick).round();
-    ((steps * tick) * 1e8).round() / 1e8
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FixedRiskLevels {
-    pub sl_price: f64,
-    pub tp_price: f64,
-    pub risk_usd: f64,
-    pub tp_usd: f64,
-}
-
-/// Penentuan level SL & TP presisi dari `qty` final agar risiko tepat `<= $1.00` dan profit `1.7R` (`$1.70`)
-/// (`riskEngine.ts:fixedRiskLevels`).
-pub fn fixed_risk_levels(
-    entry_price: f64,
-    qty: f64,
-    side: Side,
-    tick_size: f64,
-    risk_usd: f64,
-    tp_usd: f64,
-) -> Option<FixedRiskLevels> {
-    if !(entry_price > 0.0)
-        || !(qty > 0.0)
-        || !(tick_size > 0.0)
-        || !(risk_usd > 0.0)
-        || !(tp_usd > 0.0)
-    {
-        return None;
-    }
-    let mut sl_dist = quantize_step_floor(risk_usd / qty, tick_size);
-    let tp_dist = round_to_tick(tp_usd / qty, tick_size);
-    if !(sl_dist > 0.0) || !(tp_dist > 0.0) {
-        return None;
-    }
-    let calc_sl = |dist: f64| match side {
-        Side::Long => round_to_tick(entry_price - dist, tick_size),
-        Side::Short => round_to_tick(entry_price + dist, tick_size),
-    };
-    let mut sl_price = calc_sl(sl_dist);
-    let mut eff_risk = ((qty * (entry_price - sl_price).abs()) * 1e6).round() / 1e6;
-    let mut guard = 0;
-    while eff_risk > risk_usd + 1e-9 && sl_dist > tick_size && guard < 5 {
-        guard += 1;
-        sl_dist = ((sl_dist - tick_size) * 1e8).round() / 1e8;
-        sl_price = calc_sl(sl_dist);
-        eff_risk = ((qty * (entry_price - sl_price).abs()) * 1e6).round() / 1e6;
-    }
-    if eff_risk > risk_usd + 1e-6 {
-        return None;
-    }
-    let tp_price = match side {
-        Side::Long => round_to_tick(entry_price + tp_dist, tick_size),
-        Side::Short => round_to_tick(entry_price - tp_dist, tick_size),
-    };
-    let eff_tp = ((qty * (tp_price - entry_price).abs()) * 1e6).round() / 1e6;
-    Some(FixedRiskLevels {
-        sl_price,
-        tp_price,
-        risk_usd: eff_risk,
-        tp_usd: eff_tp,
-    })
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct StructuralRiskSizingResult {
-    pub ok: bool,
-    pub qty: f64,
-    pub leverage: u32,
-    pub margin_usd: f64,
-    pub notional_usd: f64,
-    pub risk_at_structure_usd: f64,
-    pub reason: Option<&'static str>,
-}
-
-/// Sizing berbasis risiko struktur `$1.00` dengan plafon margin `$4.80` (`SCALP_MAX_MARGIN_USD`) dan leverage
-/// otomatis hingga `25x` (`riskEngine.ts:structuralRiskSizing`).
-pub fn structural_risk_sizing(
-    entry_price: f64,
-    structural_sl_price: f64,
-    step_size: f64,
-    target_risk_usd: f64,
-    margin_cap_usd: f64,
-    max_leverage: u32,
-) -> StructuralRiskSizingResult {
-    let struct_dist = (entry_price - structural_sl_price).abs();
-    if !(entry_price > 0.0) || !(struct_dist > 0.0) || !(step_size > 0.0) || !(margin_cap_usd > 0.0)
-    {
-        return StructuralRiskSizingResult {
-            ok: false,
-            qty: 0.0,
-            leverage: 1,
-            margin_usd: 0.0,
-            notional_usd: 0.0,
-            risk_at_structure_usd: 0.0,
-            reason: Some("SIZING_INPUT_INVALID"),
-        };
-    }
-    let raw_qty = target_risk_usd / struct_dist;
-    let mut qty = quantize_step_floor(raw_qty, step_size);
-    if !(qty > 0.0) {
-        return StructuralRiskSizingResult {
-            ok: false,
-            qty: 0.0,
-            leverage: 1,
-            margin_usd: 0.0,
-            notional_usd: 0.0,
-            risk_at_structure_usd: 0.0,
-            reason: Some("QTY_BELOW_STEP_SIZE"),
-        };
-    }
-    let lev_cap = max_leverage.clamp(1, MAX_LEVERAGE_SYSTEM);
-    let mut notional = qty * entry_price;
-    let needed_lev = ((notional / margin_cap_usd).ceil() as u32).max(1);
-    let leverage = needed_lev.min(lev_cap);
-    if notional / (leverage as f64) > margin_cap_usd + 1e-6 {
-        let max_notional = margin_cap_usd * (leverage as f64);
-        qty = quantize_step_floor(max_notional / entry_price, step_size);
-        notional = qty * entry_price;
-    }
-    if !(qty > 0.0) {
-        return StructuralRiskSizingResult {
-            ok: false,
-            qty: 0.0,
-            leverage,
-            margin_usd: 0.0,
-            notional_usd: 0.0,
-            risk_at_structure_usd: 0.0,
-            reason: Some("MARGIN_CAP_QTY_ZERO"),
-        };
-    }
-    let margin_usd = ((notional / leverage as f64) * 1e4).round() / 1e4;
-    let risk_at_structure_usd = ((qty * struct_dist) * 1e4).round() / 1e4;
-    StructuralRiskSizingResult {
-        ok: true,
-        qty,
-        leverage,
-        margin_usd,
-        notional_usd: (notional * 1e4).round() / 1e4,
-        risk_at_structure_usd,
-        reason: None,
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1665,19 +1514,6 @@ pub fn propose_bounded_tuning(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn structural_sizing_and_fixed_levels_lock_1usd_risk() {
-        let sz = structural_risk_sizing(100.0, 97.5, 0.01, 1.0, 4.8, 25);
-        assert!(sz.ok);
-        assert!(sz.margin_usd <= 4.8);
-        assert!(sz.risk_at_structure_usd <= 1.05);
-
-        let lv = fixed_risk_levels(100.0, sz.qty, Side::Long, 0.01, 1.0, 1.7).unwrap();
-        assert!(lv.risk_usd <= 1.0 + 1e-6);
-        assert!(lv.tp_price > 100.0);
-        assert!(lv.sl_price < 100.0);
-    }
 
     #[test]
     fn sl_tp_menu_and_council_and_rate_guard_work() {

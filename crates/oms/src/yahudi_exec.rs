@@ -1,224 +1,13 @@
-//! Port 1:1 Smart Execution (`GTX` Post-Only Maker Re-Anchor & L2 Depth Slippage Guard),
 //! 4-Layer Cooldown & Symbol Probation Guard, serta Mistake Classifier & Playbook Engine
 //! dari `Yahudi-Bot` (`SCALP` Mode).
 
 use std::collections::BTreeMap;
 
-use apex_core::types::{Ms, Side};
+use apex_core::types::Ms;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
-// 1. Smart Execution: Post-Only Maker Re-Anchor (GTX) & L2 Depth Guard
-// ============================================================================
-
-pub const MAX_ANCHOR_SHIFT_PCT: f64 = 0.005; // 0.5% max shift saat re-anchor
-pub const MAX_ENTRY_GAP_PCT: f64 = 0.003; // 0.3% max gap terhadap best bid/ask
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PostOnlyAnchorResult {
-    pub allowed: bool,
-    pub anchored_price: f64,
-    pub reanchored: bool,
-    pub shift_pct: f64,
-    pub reason: String,
-}
-
-/// Port 1:1 `anchorPostOnlyEntry` dari `Yahudi-Bot/apps/server/src/exec/smartExecution.ts`.
-/// Memastikan order `LIMIT_MAKER` (`GTX`) tidak pernah menyebrangi spread dan ditolak bursa:
-/// - `LONG`: jika `desired_entry >= best_ask`, geser ke `min(best_bid, best_ask - tick_size)`
-/// - `SHORT`: jika `desired_entry <= best_bid`, geser ke `max(best_ask, best_bid + tick_size)`
-pub fn anchor_post_only_entry(
-    side: Side,
-    desired_entry: f64,
-    best_bid: f64,
-    best_ask: f64,
-    tick_size: f64,
-) -> PostOnlyAnchorResult {
-    if desired_entry <= 0.0 || best_bid <= 0.0 || best_ask <= 0.0 || best_ask < best_bid {
-        return PostOnlyAnchorResult {
-            allowed: false,
-            anchored_price: desired_entry,
-            reanchored: false,
-            shift_pct: 0.0,
-            reason: "INVALID_BOOK_PRICES".to_string(),
-        };
-    }
-
-    let tick = if tick_size > 0.0 {
-        tick_size
-    } else {
-        desired_entry * 0.0001
-    };
-
-    let mut anchored = desired_entry;
-    let mut reanchored = false;
-
-    match side {
-        Side::Long => {
-            if anchored >= best_ask {
-                anchored = best_bid.min(best_ask - tick);
-                reanchored = true;
-            }
-            let gap_pct = ((best_bid - anchored).abs()) / best_bid;
-            if gap_pct > MAX_ENTRY_GAP_PCT {
-                return PostOnlyAnchorResult {
-                    allowed: false,
-                    anchored_price: anchored,
-                    reanchored,
-                    shift_pct: ((anchored - desired_entry).abs()) / desired_entry,
-                    reason: format!("ENTRY_GAP_TOO_WIDE({:.2}%)", gap_pct * 100.0),
-                };
-            }
-        }
-        Side::Short => {
-            if anchored <= best_bid {
-                anchored = best_ask.max(best_bid + tick);
-                reanchored = true;
-            }
-            let gap_pct = ((anchored - best_ask).abs()) / best_ask;
-            if gap_pct > MAX_ENTRY_GAP_PCT {
-                return PostOnlyAnchorResult {
-                    allowed: false,
-                    anchored_price: anchored,
-                    reanchored,
-                    shift_pct: ((anchored - desired_entry).abs()) / desired_entry,
-                    reason: format!("ENTRY_GAP_TOO_WIDE({:.2}%)", gap_pct * 100.0),
-                };
-            }
-        }
-    }
-
-    let shift_pct = ((anchored - desired_entry).abs()) / desired_entry;
-    if shift_pct > MAX_ANCHOR_SHIFT_PCT {
-        return PostOnlyAnchorResult {
-            allowed: false,
-            anchored_price: anchored,
-            reanchored,
-            shift_pct,
-            reason: format!("ANCHOR_SHIFT_GT_0_5_PCT({:.2}%)", shift_pct * 100.0),
-        };
-    }
-
-    PostOnlyAnchorResult {
-        allowed: true,
-        anchored_price: anchored,
-        reanchored,
-        shift_pct,
-        reason: if reanchored {
-            "REANCHORED_POST_ONLY_GTX".to_string()
-        } else {
-            "MAKER_PRICE_OK".to_string()
-        },
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DepthGuardResult {
-    pub allowed: bool,
-    pub estimated_vwap: f64,
-    pub slippage_bps: f64,
-    pub available_notional_usd: f64,
-    pub reason: String,
-}
-
-/// Port 1:1 `checkDepthGuard` dari `Yahudi-Bot/apps/server/src/exec/smartExecution.ts`.
-/// Menghitung VWAP eksekusi dan estimasi slippage dalam bps terhadap kedalaman orderbook L2.
-pub fn check_depth_guard(
-    side: Side,
-    notional_usd: f64,
-    bids: &[(f64, f64)],
-    asks: &[(f64, f64)],
-    max_slippage_bps: f64,
-) -> DepthGuardResult {
-    let levels = match side {
-        Side::Long => asks,
-        Side::Short => bids,
-    };
-    if levels.is_empty() || notional_usd <= 0.0 {
-        return DepthGuardResult {
-            allowed: true,
-            estimated_vwap: 0.0,
-            slippage_bps: 0.0,
-            available_notional_usd: 0.0,
-            reason: "NO_DEPTH_DATA_BYPASS".to_string(),
-        };
-    }
-
-    let ref_price = levels[0].0;
-    if ref_price <= 0.0 {
-        return DepthGuardResult {
-            allowed: false,
-            estimated_vwap: 0.0,
-            slippage_bps: 0.0,
-            available_notional_usd: 0.0,
-            reason: "INVALID_TOP_LEVEL".to_string(),
-        };
-    }
-
-    let mut remaining_usd = notional_usd;
-    let mut filled_usd = 0.0;
-    let mut filled_base = 0.0;
-    let mut total_avail_usd = 0.0;
-
-    for &(p, q) in levels {
-        if p <= 0.0 || q <= 0.0 {
-            continue;
-        }
-        let lvl_usd = p * q;
-        total_avail_usd += lvl_usd;
-        if remaining_usd > 0.0 {
-            let take_usd = remaining_usd.min(lvl_usd);
-            filled_usd += take_usd;
-            filled_base += take_usd / p;
-            remaining_usd -= take_usd;
-        }
-    }
-
-    if remaining_usd > 1e-6 || filled_base <= 0.0 {
-        return DepthGuardResult {
-            allowed: false,
-            estimated_vwap: ref_price,
-            slippage_bps: 999.0,
-            available_notional_usd: total_avail_usd,
-            reason: format!(
-                "INSUFFICIENT_BOOK_DEPTH(avail=${:.0} < req=${:.0})",
-                total_avail_usd, notional_usd
-            ),
-        };
-    }
-
-    let vwap = filled_usd / filled_base;
-    let slippage_bps = ((vwap - ref_price).abs() / ref_price) * 10_000.0;
-    let max_bps = if max_slippage_bps > 0.0 {
-        max_slippage_bps
-    } else {
-        15.0
-    };
-
-    if slippage_bps > max_bps {
-        return DepthGuardResult {
-            allowed: false,
-            estimated_vwap: vwap,
-            slippage_bps,
-            available_notional_usd: total_avail_usd,
-            reason: format!(
-                "DEPTH_SLIPPAGE_TOO_HIGH({:.1}bps > {:.1}bps)",
-                slippage_bps, max_bps
-            ),
-        };
-    }
-
-    DepthGuardResult {
-        allowed: true,
-        estimated_vwap: vwap,
-        slippage_bps,
-        available_notional_usd: total_avail_usd,
-        reason: "DEPTH_OK".to_string(),
-    }
-}
-
-// ============================================================================
-// 2. 4-Layer Cooldown, Anti-Churn & Symbol Probation Guard (Yahudi-Bot RiskGuard)
+// 1. 4-Layer Cooldown, Anti-Churn & Symbol Probation Guard (Yahudi-Bot RiskGuard)
 // ============================================================================
 
 pub const GLOBAL_LOSS_COOLDOWN_MS: Ms = 15 * 60 * 1000; // 15 menit setelah loss apapun
@@ -244,7 +33,9 @@ impl YahudiCooldownGuard {
         if self.tripwire_triggered {
             return Err(format!(
                 "TRIPWIRE_HALT:{}",
-                self.tripwire_reason.as_deref().unwrap_or("2X_MAX_RISK_LOSS")
+                self.tripwire_reason
+                    .as_deref()
+                    .unwrap_or("2X_MAX_RISK_LOSS")
             ));
         }
         if now_ms < self.global_cooldown_until_ms {
@@ -479,30 +270,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn post_only_anchor_shifts_crossing_long_to_best_bid() {
-        let res = anchor_post_only_entry(Side::Long, 100.05, 100.00, 100.02, 0.01);
-        assert!(res.allowed);
-        assert!(res.reanchored);
-        assert!((res.anchored_price - 100.00).abs() < 1e-9);
-    }
-
-    #[test]
-    fn depth_guard_computes_vwap_and_slippage() {
-        let asks = vec![(100.0, 5.0), (100.05, 10.0)];
-        let bids = vec![(99.95, 5.0), (99.90, 10.0)];
-        let res = check_depth_guard(Side::Long, 800.0, &bids, &asks, 15.0);
-        assert!(res.allowed);
-        assert!(res.slippage_bps < 5.0);
-    }
-
-    #[test]
     fn cooldown_guard_enforces_sl_and_probation() {
         let mut g = YahudiCooldownGuard::default();
         let t0 = 1_000_000;
         g.on_trade_closed("SOLUSDT", t0, -1.0, "SL", 1.0);
         // Global SL cooldown 60m active
         assert!(g.can_enter("BTCUSDT", t0 + 60_000).is_err());
-        assert!(g.can_enter("BTCUSDT", t0 + GLOBAL_SL_COOLDOWN_MS + 1).is_ok());
+        assert!(g
+            .can_enter("BTCUSDT", t0 + GLOBAL_SL_COOLDOWN_MS + 1)
+            .is_ok());
 
         // 3 consecutive losses on SOLUSDT triggers 45m probation
         let t1 = t0 + GLOBAL_SL_COOLDOWN_MS + 10_000;
@@ -510,7 +286,11 @@ mod tests {
         let t2 = t1 + GLOBAL_LOSS_COOLDOWN_MS + 10_000;
         g.on_trade_closed("SOLUSDT", t2, -0.5, "TREND_FLIP", 1.0);
         // After global loss cooldown expires (15m), SOLUSDT is still in 45m probation!
-        assert!(g.can_enter("BTCUSDT", t2 + GLOBAL_LOSS_COOLDOWN_MS + 1).is_ok());
-        assert!(g.can_enter("SOLUSDT", t2 + GLOBAL_LOSS_COOLDOWN_MS + 1).is_err());
+        assert!(g
+            .can_enter("BTCUSDT", t2 + GLOBAL_LOSS_COOLDOWN_MS + 1)
+            .is_ok());
+        assert!(g
+            .can_enter("SOLUSDT", t2 + GLOBAL_LOSS_COOLDOWN_MS + 1)
+            .is_err());
     }
 }
