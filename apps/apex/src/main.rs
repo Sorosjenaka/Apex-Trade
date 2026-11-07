@@ -4,6 +4,7 @@ mod bt;
 mod cfg;
 mod forward_gate_cmd;
 mod live;
+mod ops_cmd;
 mod review_cmd;
 mod review_stats;
 #[cfg(test)]
@@ -156,6 +157,17 @@ enum Cmd {
         #[arg(long)]
         audit: Option<PathBuf>,
     },
+    /// Pemeriksaan pra-terbang read-only (--target demo|live [--notify-test])
+    Preflight {
+        /// demo | live
+        #[arg(long, default_value = "demo")]
+        target: String,
+        /// Uji kirim webhook notifikasi HTTP sinkron
+        #[arg(long)]
+        notify_test: bool,
+    },
+    /// Uji asap order limit GTX aman di Binance Demo Futures
+    DemoSmoke,
 }
 
 fn to_bt(o: BtOpts) -> bt::BtArgs {
@@ -306,5 +318,16 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Cmd::Preflight {
+            target,
+            notify_test,
+        } => {
+            let pass = ops_cmd::run_preflight_cli(&cfg, &target, notify_test).await?;
+            if !pass {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Cmd::DemoSmoke => ops_cmd::run_demo_smoke_cli(&cfg).await,
     }
 }

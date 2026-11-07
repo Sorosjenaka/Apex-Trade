@@ -132,12 +132,15 @@ pub fn iso_year_week(ms: Ms) -> (i32, u32) {
 }
 
 /// Block-bootstrap per minggu ISO menggunakan [`SplitMix`] deterministik.
+pub type BootstrapSummary = (f64, Option<(f64, f64)>, usize);
+
 /// Mengembalikan `(mean_r, Option<(ci_low, ci_high)>, iso_week_count)`.
 /// Bila seluruh sampel berada dalam `< 2` minggu ISO, CI dikembalikan `None` karena variasi antar-blok belum terukur.
+#[allow(clippy::type_complexity)]
 pub fn iso_week_block_bootstrap_ci95(
     ts_and_r: &[(Ms, f64)],
     resamples: usize,
-) -> Option<(f64, Option<(f64, f64)>, usize)> {
+) -> Option<BootstrapSummary> {
     if ts_and_r.is_empty() {
         return None;
     }

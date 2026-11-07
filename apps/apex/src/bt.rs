@@ -1,4 +1,5 @@
 //! `apex backtest` dan `apex validate` (Rules §4.3 G-01..G-11, parsial).
+#![allow(clippy::needless_lifetimes)]
 use crate::cfg::AllConfig;
 use apex_backtest::*;
 use apex_core::time::{fmt_utc, parse_ymd};

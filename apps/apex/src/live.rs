@@ -1,4 +1,10 @@
 //! Perintah berbasis data PUBLIK (fetch, reader, screen, record) + loop `run`.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::print_literal,
+    clippy::unnecessary_lazy_evaluations,
+    clippy::unnecessary_sort_by
+)]
 #![cfg_attr(
     not(test),
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)

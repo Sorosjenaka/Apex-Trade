@@ -15,10 +15,10 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 pub struct BinanceRest {
-    http: reqwest::Client,
-    base: String,
-    creds: Credentials,
-    recv_window: u64,
+    pub(crate) http: reqwest::Client,
+    pub(crate) base: String,
+    pub(crate) creds: Credentials,
+    pub(crate) recv_window: u64,
     offset_ms: AtomicI64,
     used_weight: AtomicU64,
     banned_until: AtomicI64,
@@ -188,7 +188,7 @@ impl BinanceRest {
         self.handle(r).await
     }
 
-    async fn handle(&self, r: reqwest::Response) -> Result<Value, ExError> {
+    pub(crate) async fn handle(&self, r: reqwest::Response) -> Result<Value, ExError> {
         let st = r.status().as_u16();
         if let Some(w) = r
             .headers()
