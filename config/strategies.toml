@@ -1,10 +1,13 @@
 # Urutan = prioritas bila dua sinyal bersamaan.
+# Mode Scalping Yahudi-Bot (S01_SWEEP & S02_SNIPER) + S1_TFP (tanpa RSW Swing)
 research_entry_5m = true # hanya backtest S1/S3; regime tetap 15m/1h
-enabled = ["S1"]
+enabled = ["S01_SWEEP", "S02_SNIPER", "S1"]
 
 # Status validasi (Rules §4.3). HANYA "GO" yang boleh mengirim order testnet/live.
 # Semua masih HIPOTESIS / NO-GO — belum ada yang lolos gate G-01..G-11.
 [status]
+S01_SWEEP = "NO-GO"
+S02_SNIPER = "NO-GO"
 S1 = "NO-GO"
 S2 = "NO-GO"
 S3 = "NO-GO"
@@ -12,6 +15,14 @@ S4 = "NO-GO"
 S5 = "NO-GO"
 
 [params]
+# Yahudi-Bot Scalping Pro Parameters (S-01 Sweep Reclaim & S-02 Liquidity Sniper)
+scalp_rr = 1.7
+scalp_sl_buffer_atr = 0.46
+scalp_min_sl_atr = 0.805
+scalp_pull_bias_threshold = 1.6
+scalp_cvd_gate = true
+scalp_momentum_5m_gate = true
+scalp_ttl = 4
 sl_buffer_atr = 0.15
 s1_gap_atr = 0.20
 s1_body_frac = 0.50

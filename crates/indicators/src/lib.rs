@@ -6,6 +6,10 @@ use apex_core::types::{Bar, Ms, Tf};
 
 pub mod regime;
 pub use regime::*;
+pub mod yahudi;
+pub use yahudi::*;
+pub mod artatrade;
+pub use artatrade::*;
 
 pub fn closes(b: &[Bar]) -> Vec<f64> {
     b.iter().map(|x| x.close).collect()

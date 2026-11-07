@@ -847,6 +847,13 @@ pub fn run_backtest(mkt: &MarketInput, cfg: &BacktestConfig) -> anyhow::Result<B
                         };
                         let dist = (sz.entry - sz.sl).abs();
                         to_f64(si.filters.round_tp(sig.side, sz.entry + sgn * to_dec(cfg.params.s1_rr) * dist))
+                    } else if sig.strategy.is_yahudi_scalp() && cfg.params.scalp_rr > 0.0 {
+                        let sgn = match sig.side {
+                            Side::Long => rust_decimal::Decimal::ONE,
+                            Side::Short => -rust_decimal::Decimal::ONE,
+                        };
+                        let dist = (sz.entry - sz.sl).abs();
+                        to_f64(si.filters.round_tp(sig.side, sz.entry + sgn * to_dec(cfg.params.scalp_rr) * dist))
                     } else {
                         to_f64(sz.tp)
                     };

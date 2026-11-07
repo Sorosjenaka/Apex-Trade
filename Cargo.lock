@@ -153,6 +153,7 @@ name = "apex-indicators"
 version = "0.1.0"
 dependencies = [
  "apex-core",
+ "serde",
 ]
 
 [[package]]

@@ -1,98 +1,216 @@
-# Apex Scalper RS
+<div align="center">
 
-Bot scalping **Binance USDⓈ-M Futures** (crypto saja) dalam Rust: Market Reader → Screener + Volume Gate → 5 strategi → Risk Engine → OMS (paper / testnet / live).
+# Apex Trade
 
-> ⚠️ **Default AMAN:** `mode = "paper"` dan `arm = false` di `config/engine.toml`.
-> Paper = simulasi lokal (MockExchange) dengan harga publik — **tidak ada order ke Binance**.
-> Semua strategi berstatus **NO-GO** (belum lolos gate validasi). Testnet/live hanya mengirim order untuk strategi berstatus `GO`.
+### Sistem Perdagangan Scalping Otomatis untuk Binance USDT-M Futures
 
-## Golden Rules (dikunci di kode; config yang beda = engine menolak start)
-| Aturan | Nilai |
+**Pemantauan pasar 7-gate · Sinyal scalping multi-timeframe · Dewan penilai 3-agen · Risiko presisi \$1 · Terminal web gelap realtime**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-facc15.svg?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-%3E%3D1.85-f97316.svg?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Mode Aman](https://img.shields.io/badge/Default-PAPER%20(simulasi)-2563eb.svg?style=flat-square)](#mode-aman)
+[![Eksekusi](https://img.shields.io/badge/ARM-OFF%20(terkunci)-dc2626.svg?style=flat-square)](#mode-aman)
+
+![Diagram Wadah Apex Trade](docs/diagrams/apex-c4-wadah-id.png)
+
+</div>
+
+---
+
+## Daftar Isi
+
+- [Tentang](#tentang)
+- [Fitur Unggulan](#fitur-unggulan)
+- [Arsitektur Sistem](#arsitektur-sistem)
+- [Cara Kerja](#cara-kerja)
+- [Mode Aman](#mode-aman)
+- [Instalasi Cepat](#instalasi-cepat)
+- [Struktur Proyek](#struktur-proyek)
+- [Teknologi](#teknologi)
+- [Disclaimer & Lisensi](#disclaimer--lisensi)
+
+---
+
+## Tentang
+
+**Apex Trade** adalah sistem perdagangan otomatis (*high-discipline scalping engine*) berbasis **Rust** untuk pasar **Binance USDT-M Futures**, dirancang dengan tiga prinsip inti: **keselamatan modal lebih dulu, eksekusi deterministik tanpa *look-ahead*, dan setiap keputusan tercatat secara transparan**.
+
+Sistem ini difokuskan murni pada **jalur Scalping (`SCALP`)** — tanpa strategi *swing* — bekerja penuh dari hulu ke hilir: menyaring ratusan kontrak perpetual kripto secara realtime, membaca konteks makro `BTC.D × BTC` serta mikrostruktur orderflow, membangkitkan sinyal lengkap dengan rencana masuk dan keluar presisi, memvalidasi batas risiko matematis \$1 per posisi, menyidangkan kandidat pada **Dewan Penilai 3-Agen + Arena Tesis Arah**, mengeksekusi serta mengawasi posisi terbuka secara otomatis, hingga mengevaluasi hasil lewat forensik *5-Whys* dan validasi *Combinatorial Purged Cross-Validation* (CPCV).
+
+Setiap keputusan sistem — termasuk alasan pasti mengapa sebuah sinyal **dilewati atau ditolak** — ditulis ke log audit JSONL sehingga perilaku mesin selalu dapat diaudit kapan saja.
+
+## Fitur Unggulan
+
+<details open>
+<summary><b>📡 Scanner Pasar Realtime 7-Gate & Penjaga Kelas Aset</b></summary>
+
+- Memantau kontrak perpetual USDT-M melalui kombinasi REST dan WebSocket publik dengan *rate-limit guard* otomatis (pelacak bobot `X-MBX-USED-WEIGHT-1M` dan *backoff* mandiri saat HTTP `429`/`418`).
+- **Asset Class Guard (*default-deny*)** menyaring kontrak non-kripto (saham, komoditas, indeks TradFi, dan fan token) sebelum masuk ke pemindaian.
+- Setiap simbol dievaluasi melewati **7 gerbang kandidat**: likuiditas volume, rezim pasar, arah tren ZLEMA, skor komposit, kelayakan rencana trade, filter *Choppiness Index*, dan batas volatilitas ATR.
+</details>
+
+<details open>
+<summary><b>🧠 Mesin Sinyal Scalping Multi-Timeframe (Khusus SCALP)</b></summary>
+
+- Menggabungkan konteks makro `1h`, struktur eksekusi `15m`, dan konfirmasi momentum `5m` bersama aliran *Cumulative Volume Delta* (CVD), *Zero-Lag EMA*, profil volume 48-bin (`POC`/`VAH`/`VAL`), dan peta magnet likuidasi.
+- Mengoperasikan katalog strategi scalping terfokus: **Trend-Following Pullback (`S1_TFP`)**, **Liquidity Sweep Reclaim (`S01_SWEEP`)**, dan **Liquidity Sniper (`S02_SNIPER`)** — seluruhnya hanya membaca bar yang **sudah tertutup** (*strict closed-bar causality*).
+- Setiap sinyal lahir lengkap dengan **harga entri, pita invalidasi SL 2–4%, serta target bertingkat (1.7R–2.0R)**.
+</details>
+
+<details open>
+<summary><b>⚖️ Gerbang Risiko Deterministik (\$1 Risk & Volatility Shield)</b></summary>
+
+- Menghitung ukuran posisi presisi dari anggaran risiko tetap **\$1.00 per trade** dengan pembulatan `stepSize` dan `tickSize` bursa menggunakan aritmetika desimal eksak (`rust_decimal`).
+- **Volatility Shield** otomatis memblokir entri baru saat terjadi lonjakan ATR ekstrem, pelebaran *spread*, atau rezim menyamping (`CHOP_NO_TRADE`).
+- Dilengkapi batas posisi terbuka maksimum, jeda pendinginan pasca-*stop-loss*, batas kerugian harian UTC, dan penjaga jarak likuidasi.
+</details>
+
+<details open>
+<summary><b>🤖 Dewan Penilai 3-Agen & Arena Arah (Fail-Closed)</b></summary>
+
+- **Vega (*Macro Scout*)** — memvalidasi keselarasan posisi altcoin terhadap matriks 6-kondisi `BTC.D × BTC`.
+- **Arka (*Setup Judge*)** — mengaudit konfluensi skor setup, kemiripan analog historis (*k-NN*), dan keselarasan orderflow CVD.
+- **Wardha (*Risk Officer*)** — menguji kelayakan rasio jarak *stop-loss* terhadap ATR dan memilih varian proteksi struktural terbaik.
+- **Arena Tesis Arah (*Bull vs Bear*)** — mempertemukan tesis `LONG` dan `SHORT` di hadapan juri netral. Seluruh lapisan bersifat **fail-closed**: satu *hard veto* atau keraguan langsung membatalkan eksekusi.
+</details>
+
+<details open>
+<summary><b>🎯 Manajemen Posisi & OMS Otomatis</b></summary>
+
+- Eksekusi entri menggunakan `LIMIT GTX` (*post-only maker*) atau `MARKET` dengan `newClientOrderId` deterministik; status posisi disimpan ke disk **sebelum** paket dikirim ke bursa.
+- Proteksi ganda di sisi bursa melalui *Conditional Algo Order* (`MARK_PRICE`, `closePosition=true`), rekonsiliasi posisi yatim (*anti-orphan*) berkala, dan **Trend-Flip Confirmation Guard** yang menutup posisi lebih awal bila tren berbalik selama beberapa bar berturut-turut.
+- `MockExchange` mengimplementasikan antarmuka yang identik dengan bursa nyata untuk simulasi `PAPER` yang presisi.
+</details>
+
+<details open>
+<summary><b>📊 Dashboard & Terminal Web Gelap Realtime</b></summary>
+
+- Antarmuka web bertema gelap (*dark terminal*) dengan grafik kline multi-timeframe bebas *clutter*, pantauan kurva ekuitas, buku posisi terbuka, peta panas likuidasi, dan aliran mikrostruktur.
+- Menyediakan endpoint inspeksi langsung untuk tabel pemindaian 7-gate (`/api/markets/scan`), status 21 peran agen (`/api/live/mesh`), audit semesta simbol (`/api/universe/audit`), dan metrik probabilitas (`/api/learning/probability`).
+</details>
+
+<details open>
+<summary><b>🔁 Siklus Belajar, Forensik 5-Whys & Validasi CPCV</b></summary>
+
+- Setiap perdagangan yang selesai dianalisis otomatis oleh modul **5-Whys Post-Mortem Forensics** dan dihitung batas bawah tingkat kemenangannya menggunakan **Wilson 95% Lower Bound**.
+- Mesin *backtest* bebas *look-ahead* mendukung pengujian stres biaya, *Monte Carlo drawdown*, *Deflated Sharpe Ratio* (DSR), serta **Combinatorial Purged Cross-Validation (CPCV)** dengan *embargo* antar-lipatan.
+</details>
+
+<details open>
+<summary><b>🛡️ Operasional, Watchdog & Ketahanan Sistem</b></summary>
+
+- Skrip `apex_watchdog.ps1` menjaga mesin simulasi dan server dashboard tetap berjalan otomatis, mencegah *host sleep*, serta mengamankan port dashboard dari pembajakan proses asing.
+- *Kill switch* berbasis berkas (`state/KILL`) siap menghentikan entri baru atau meratakan posisi kapan pun dibutuhkan operator.
+</details>
+
+## Arsitektur Sistem
+
+Dokumentasi arsitektur disusun mengikuti standar **C4 Model** (*Konteks → Wadah → Komponen*) dalam Bahasa Indonesia dengan diagram alur bertema gelap (*dark React Flow*):
+
+| Level | Diagram | Gambar |
+|---|---|---|
+| 1 | **Konteks Sistem** — interaksi operator, mesin Rust, dan layanan eksternal | ![Konteks](docs/diagrams/apex-c4-konteks-id.png) |
+| 2 | **Wadah** — pembagian crate Rust, penyimpanan audit, dan terminal web | ![Wadah](docs/diagrams/apex-c4-wadah-id.png) |
+| 3 | **Komponen** — alur satu kandidat di dalam mesin inti scalping | ![Komponen](docs/diagrams/apex-c4-komponen-id.png) |
+
+Penjelasan tiap level: **[docs/id/04-arsitektur-c4.md](docs/id/04-arsitektur-c4.md)**
+
+## Cara Kerja
+
+Secara ringkas, setiap kandidat scalping melewati rantai gerbang satu arah berikut:
+
+```mermaid
+flowchart LR
+    A[Pasar<br/>realtime] --> B[Scanner<br/>7-Gate]
+    B --> C[Analisis MTF<br/>& Mikrostruktur]
+    C --> D[Mesin Sinyal<br/>S1 · S-01 · S-02]
+    D --> E[Gerbang Risiko<br/>$1 · Vol Shield]
+    E --> F[Dewan 3-Agen<br/>& Arena · fail-closed]
+    F --> G[Eksekusi OMS<br/>PAPER / Live GTX]
+    G --> H[Pengawas Posisi<br/>& Trend-Flip]
+    H --> I[Forensik 5-Whys<br/>& CPCV]
+    I -.-> C
+```
+
+Diagram alur rinci dari sinyal hingga siklus hidup perdagangan:
+
+| | |
 |---|---|
-| Modal / risk per trade | $60 / $1 (risk aktual setelah pembulatan stepSize harus 0,80–1,00, kalau tidak → skip) |
-| Stop loss | 2–4 % dari entry, di luar itu → skip |
-| Leverage / margin | 25× CROSS, one-way, margin variabel (qty dari risk, bukan margin tetap) |
-| Posisi maks | 2 (pending entry ikut dihitung) |
-| Stop harian | 6 SL **atau** −$6 realized → stop sampai 00:00 UTC (07:00 WIB) |
-| Cooldown | 1 jam setelah SL |
-| Sideways | tidak trading (Market Reader `CHOP_NO_TRADE`) |
-| Universe | allowlist crypto default-deny (TradFi/saham/pre-market ditolak) + volume gate; BTC hanya konteks |
+| Pipeline dari sinyal ke order | ![Pipeline](docs/diagrams/apex-pipeline-id.png) |
+| Kehidupan satu perdagangan | ![Workflow](docs/diagrams/apex-workflow-id.png) |
 
-## Struktur
-```
-crates/core           tipe, config, sizing, rounding filter, risk gate, audit log
-crates/indicators     EMA/ATR/ADX/ER/CHOP/SRV dll (closed-bar)
-crates/data           REST publik (klines, funding, exchangeInfo, ticker), WS publik, CSV, TradingView scanner
-crates/market_reader  regime global (RISK_ON_ALTS / BTC_LED / RISK_OFF / CHOP_NO_TRADE / SHOCK_HALT)
-crates/screener       regime per simbol, allowlist, volume gate V-01..V-10
-crates/strategies     S1 TFP, S2 LSR, S3 SBR, S4 WSL, S5 RMP
-crates/backtest       engine event-driven tanpa look-ahead, statistik, Monte Carlo, PSR/DSR
-crates/oms            Order Management System Binance (+ MockExchange)
-apps/apex             CLI `apex`
-config/               engine.toml, risk.toml, screener.toml, strategies.toml, blacklist.json, filters_snapshot.json
-docs/plan/            dokumen rencana (PRD, Rules, STRATEGIES, …)
-```
+Detail lengkap alur kerja: **[docs/id/02-alur-kerja-workflow.md](docs/id/02-alur-kerja-workflow.md)**
 
-## Setup Windows
-1. Install Rust (MSVC) dari https://rustup.rs — butuh Rust ≥ 1.85.
-2. Buka PowerShell di folder ini:
-   ```powershell
-   cargo build --release
-   cargo test --workspace
-   ```
-   TLS memakai **rustls** (tanpa OpenSSL), jadi tidak perlu install apa-apa lagi.
-3. Binary: `target\release\apex.exe`.
+## Mode Aman
 
-## Perintah
+Keselamatan modal dikunci langsung di tingkat kode sumber:
+
+1. **Mode bawaan = simulasi (`mode = "paper"`).** Seluruh pipeline berjalan utuh — pemindaian pasar publik, sinyal scalping, sidang dewan 3-agen, simulasi `MockExchange`, dan pencatatan audit — **tanpa mengirim satu pun order ke Binance**.
+2. **Saklar eksekusi (`arm = false`) terkunci secara bawaan** di `config/engine.toml` dan tidak memiliki flag CLI untuk menyalakannya secara tidak sengaja.
+3. **Pengaman berlapis untuk mode `live`**: mesin menolak berjalan di mode nyata kecuali `arm = true`, `--mode live`, dan variabel lingkungan `APEX_LIVE_CONFIRM=I_UNDERSTAND_LIVE_ORDERS` ketiganya aktif secara bersamaan.
+4. Kunci API hanya dibaca dari variabel lingkungan proses — tidak pernah dicatat ke log, tidak ditampilkan di dashboard, dan tidak pernah disimpan di repositori.
+
+## Instalasi Cepat
+
 ```powershell
-# data publik (tanpa API key)
-.\target\release\apex.exe fetch --from 2025-01-01 --to 2026-05-01 --data data
-.\target\release\apex.exe reader                 # regime global sekarang (+ BTC.D/TOTAL dari TradingView bila tersedia)
-.\target\release\apex.exe screen --top 15        # allowlist + volume gate + regime per simbol
-.\target\release\apex.exe record --data data     # rekam bar tertutup dari WebSocket publik
+git clone https://github.com/Sorosjenaka/Apex-Trade.git
+cd Apex-Trade
 
-# backtest / validasi (holdout 2026-05-01..2026-10-31 dikunci)
-.\target\release\apex.exe backtest --data data --per-strategy
-.\target\release\apex.exe backtest --data data --strategies S1 --stress
-.\target\release\apex.exe validate --data data --strategies S1,S5
+# Build binary teroptimasi & jalankan seluruh unit test workspace
+cargo build --release --bin apex
+cargo test --workspace
 
-# engine
-.\target\release\apex.exe run --mode paper            # simulasi, tanpa order
-.\target\release\apex.exe run --mode paper --once     # satu siklus 15m
-.\target\release\apex.exe status
-.\target\release\apex.exe kill --reason "manual"      # blok entry baru
-.\target\release\apex.exe kill --flatten              # engine menutup semua posisi
-.\target\release\apex.exe kill --release
+# Jalankan mesin scalping dalam mode simulasi aman (PAPER)
+.\target-msvc\release\apex.exe run --mode paper
+
+# Di terminal terpisah, nyalakan Dashboard & Terminal Web (port 8787)
+python dashboard\server.py
 ```
-Hasil backtest → `reports\bt_*.json` + `*.trades.csv`; setiap run dicatat di `reports\trials_ledger.jsonl` (untuk DSR).
 
-## Testnet dulu, live belakangan
-1. Buat API key di **Binance Futures Demo/Testnet** (`demo-fapi.binance.com`).
-2. Set key **hanya di environment proses** (engine tidak membaca file `.env`):
-   ```powershell
-   $env:BINANCE_API_KEY="..."; $env:BINANCE_API_SECRET="..."
-   ```
-3. Edit `config/engine.toml`: `arm = true` (**Anda sendiri** yang mengubah ini), lalu `apex run --mode testnet`.
-4. Strategi hanya diperdagangkan bila status `GO` di `config/strategies.toml`. Ubah status hanya setelah strategi lolos `validate` + holdout + review Anda.
-5. **Live** butuh ketiganya: `arm = true`, `--mode live`, dan `$env:APEX_LIVE_CONFIRM="I_UNDERSTAND_LIVE_ORDERS"`. Base URL juga dicek: mode testnet menolak host live, mode live menolak host non-live.
+Buka browser ke `http://127.0.0.1:8787` untuk memantau terminal pasar, posisi simulasi, serta telemetri mesin secara langsung.
 
-## OMS (Order Management)
-- Signed REST HMAC-SHA256, `recvWindow`, sinkron jam server (retry sekali saat -1021), throttle weight + backoff 429/418.
-- Saat start: one-way mode, margin CROSSED, leverage 25× per simbol.
-- Entry LIMIT GTX (post-only) atau MARKET, `newClientOrderId` unik `apx…`; state disimpan **sebelum** order dikirim.
-- Proteksi SL/TP lewat **Algo Order** (`/fapi/v1/algoOrder`, CONDITIONAL, `closePosition=true`, `workingType=MARK_PRICE`, `priceProtect`).
-- ACK ≠ FILLED: user data stream (ORDER_TRADE_UPDATE / ALGO_UPDATE / ACCOUNT_UPDATE) adalah sumber kebenaran; hasil tidak pasti (timeout/5xx) → query by clientOrderId.
-- SL gagal dipasang → retry → flatten; flatten gagal → status `Unprotected` + kill switch, terus dicoba. Close gagal **tidak** menghapus posisi dari buku.
-- Rekonsiliasi saat boot & tiap 5 menit: posisi yatim → pasang SL (atau flatten sesuai `orphan_policy`).
-- Kill switch berbasis file (`state/KILL`), audit log JSONL (`state/<mode>/audit.jsonl`), state `state/<mode>/oms_state.json`.
-- `MockExchange` mengimplementasikan trait yang sama → dipakai untuk paper & 16 tes state machine.
+Panduan pemasangan lengkap langkah demi langkah (termasuk watchdog otomatis, backtest, dan prosedur keamanan):
+**[docs/id/03-tutorial-pasang.md](docs/id/03-tutorial-pasang.md)**
 
-## Varian S5 kNN
+## Struktur Proyek
 
-Varian K bersifat opsional dan default `s5_knn_enabled = false`. Bila diaktifkan dalam `[params]`, S5 memerlukan 15 tetangga dengan label yang sudah tutup sebelum waktu sinyal; kurang data berarti skip. Backtest melatih awal lewat replay S5 pada data sebelum awal periode yang diuji, lalu menambah hanya trade OOS yang sudah tutup. Trade penutupan paksa di akhir data tidak menjadi label. Replay pelatihan ditolak bila rentangnya beririsan dengan holdout terkunci. Latih awal memakai biaya dasar juga pada uji stres; label trade OOS yang kemudian masuk tetap memakai biaya skenario tersebut, sehingga urutan sinyal dapat berbeda antar skenario. Engine memakai riwayat trade S5 yang tertutup dan memiliki fitur tersimpan dalam state OMS; riwayat lama tanpa fitur dilewati. Bila varian K diaktifkan saat riwayat belum cukup, semua sinyal S5 akan di-skip; riwayat dapat dikumpulkan di paper dengan varian K nonaktif sebelum penilaian. Versi ini belum membuktikan parity terhadap Pine atau keuntungan strategi.
+```text
+Apex-Trade/
+├── apps/
+│   └── apex/                 # Binary CLI utama: run (paper/testnet/live), backtest, validate, screen
+├── crates/
+│   ├── core/                 # Tipe dasar, sizing risiko $1 (rust_decimal), filter presisi & audit JSONL
+│   ├── indicators/           # ZLEMA, ATR, ADX, Choppiness, Volume Profile 48-bin, Fib & MRV Gate
+│   ├── data/                 # Klien REST/WebSocket publik Binance (rustls), CSV & cache klines
+│   ├── market_reader/        # Deteksi rezim pasar global & konteks dominansi BTC
+│   ├── screener/             # Asset Class Guard, Volume Gate, Scanner 7-Gate, LiqMap & Orderflow Delta
+│   ├── strategies/           # Strategi scalping tertutup: S1_TFP, S01_SWEEP, S02_SNIPER & k-NN analog
+│   ├── backtest/             # Simulator bebas look-ahead, Monte Carlo, PSR/DSR & validasi CPCV
+│   └── oms/                  # Order Management System, MockExchange, Dewan 3-Agen, Rate Guard & 5-Whys
+├── config/                   # Konfigurasi engine.toml (arm=false), risk.toml, screener.toml, strategies.toml
+├── dashboard/                # Server HTTP/SSE ringan & antarmuka terminal web gelap (:8787)
+├── scripts/                  # Skrip operasional & watchdog proses otomatis (PowerShell)
+├── docs/
+│   ├── id/                   # Panduan lengkap Bahasa Indonesia ← mulai dari sini
+│   ├── public/               # Dokumentasi arsitektur teknis (Bahasa Inggris)
+│   └── diagrams/             # Diagram arsitektur C4, pipeline, dan workflow versi gelap
+└── .env.example              # Template variabel lingkungan (tanpa rahasia)
+```
 
-## Batasan yang perlu Anda tahu
-- Strategi adalah **proxy** dari Pine (lihat CHANGELOG); belum ada yang lolos gate → semua NO-GO.
-- Regime backtest memakai proxy BTCDOMUSDT (bukan BTC.D TradingView historis); filter exchange = snapshot sekarang, bukan historis; volume gate di backtest hanya V-01/V-02 proxy.
-- OMS **belum pernah diuji ke exchange sungguhan** (hanya MockExchange). Jalankan testnet lama dulu.
-- Tidak ada SQLite / dashboard web (state = JSON, log = JSONL).
+## Teknologi
+
+| Lapisan | Teknologi |
+|---|---|
+| Mesin inti & eksekusi | **Rust** (Edition 2021, ≥ 1.85), **Tokio** async runtime |
+| Presisi finansial & TLS | `rust_decimal` (desimal eksak), `reqwest` + `tokio-tungstenite` (`rustls`, murni tanpa OpenSSL) |
+| Penyimpanan & jejak audit | State atomik JSON (`oms_state.json`) & *append-only* JSONL (`audit.jsonl`) |
+| Terminal & dashboard web | Python `ThreadingHTTPServer` + SSE, HTML5/CSS3 Dark UI, Lightweight Charts |
+| Data pasar & bursa | Binance USDT-M Futures (REST + WebSocket publik & terautentikasi HMAC-SHA256) |
+| Validasi kuantitatif | Event-driven Backtester, Combinatorial Purged Cross-Validation (CPCV), Wilson 95% LB |
+| Arsitektur dokumentasi | C4 Model & Mermaid |
+
+## Disclaimer & Lisensi
+
+> Perdagangan kontrak berjangka (*futures*) aset kripto memiliki risiko tinggi dan dapat mengakibatkan kehilangan seluruh modal. Perangkat lunak ini disediakan **apa adanya (*as-is*)** untuk tujuan riset dan rekayasa sistem tanpa jaminan apa pun. Seluruh keputusan penggunaan menjadi tanggung jawab penuh pengguna. Kinerja simulasi maupun pengujian masa lalu tidak menjamin hasil di masa depan.
+
+Didistribusikan di bawah lisensi **MIT** — lihat [LICENSE](LICENSE).

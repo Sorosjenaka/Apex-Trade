@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod strats;
 pub use strats::*;
+pub mod yahudi_scalp;
+pub use yahudi_scalp::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum StrategyId {
@@ -22,10 +24,22 @@ pub enum StrategyId {
     S3Sbr,
     S4Wsl,
     S5Rmp,
+    S01Sweep,
+    S02Sniper,
 }
 
 impl StrategyId {
     pub const ALL: [StrategyId; 5] = [StrategyId::S1Tfp, StrategyId::S2Lsr, StrategyId::S3Sbr, StrategyId::S4Wsl, StrategyId::S5Rmp];
+    pub const YAHUDI_SCALP: [StrategyId; 2] = [StrategyId::S01Sweep, StrategyId::S02Sniper];
+    pub const ALL_WITH_SCALP: [StrategyId; 7] = [
+        StrategyId::S1Tfp,
+        StrategyId::S2Lsr,
+        StrategyId::S3Sbr,
+        StrategyId::S4Wsl,
+        StrategyId::S5Rmp,
+        StrategyId::S01Sweep,
+        StrategyId::S02Sniper,
+    ];
     pub fn code(&self) -> &'static str {
         match self {
             StrategyId::S1Tfp => "S1_TFP",
@@ -33,10 +47,20 @@ impl StrategyId {
             StrategyId::S3Sbr => "S3_SBR",
             StrategyId::S4Wsl => "S4_WSL",
             StrategyId::S5Rmp => "S5_RMP",
+            StrategyId::S01Sweep => "S01_SWEEP",
+            StrategyId::S02Sniper => "S02_SNIPER",
         }
     }
+    pub fn is_yahudi_scalp(&self) -> bool {
+        matches!(self, StrategyId::S01Sweep | StrategyId::S02Sniper)
+    }
     pub fn parse(s: &str) -> Option<StrategyId> {
-        let u = s.to_ascii_uppercase();
+        let u = s.trim().to_ascii_uppercase();
+        match u.as_str() {
+            "S01" | "S-01" | "S01_SWEEP" | "SWEEP" => return Some(StrategyId::S01Sweep),
+            "S02" | "S-02" | "S02_SNIPER" | "SNIPER" => return Some(StrategyId::S02Sniper),
+            _ => {}
+        }
         StrategyId::ALL.into_iter().find(|x| x.code() == u || x.code().starts_with(&format!("{u}_")) || u == x.code()[..2])
     }
 }
@@ -101,6 +125,14 @@ pub struct StrategyParams {
     pub s5_knn_enabled: bool,
     pub sl_min_pct: f64,
     pub sl_max_pct: f64,
+    // Yahudi-Bot Scalping Pro (S-01 Sweep Reclaim & S-02 Liquidity Sniper)
+    pub scalp_rr: f64,
+    pub scalp_sl_buffer_atr: f64,
+    pub scalp_min_sl_atr: f64,
+    pub scalp_pull_bias_threshold: f64,
+    pub scalp_cvd_gate: bool,
+    pub scalp_momentum_5m_gate: bool,
+    pub scalp_ttl: u32,
 }
 
 impl Default for StrategyParams {
@@ -138,6 +170,13 @@ impl Default for StrategyParams {
             s5_knn_enabled: false,
             sl_min_pct: 0.02,
             sl_max_pct: 0.04,
+            scalp_rr: 1.7,
+            scalp_sl_buffer_atr: 0.46,
+            scalp_min_sl_atr: 0.805,
+            scalp_pull_bias_threshold: 1.6,
+            scalp_cvd_gate: true,
+            scalp_momentum_5m_gate: true,
+            scalp_ttl: 4,
         }
     }
 }
@@ -486,12 +525,32 @@ pub fn to_real(id: StrategyId, v: &View, r: RawSignal) -> Signal {
 /// Callers must apply risk gates and, when enabled, the stateful S5 kNN grader.
 pub fn evaluate(sym: &SymbolSeries, t: usize, state: SymState, ids: &[StrategyId], p: &StrategyParams) -> Vec<Signal> {
     let mut out = Vec::new();
+    // 1. Evaluasi strategi Yahudi-Bot Scalping Pro (S-01 Sweep Reclaim & S-02 Liquidity Sniper)
+    //    pada bar asli (un-mirrored) menggunakan Regime Detector & ZLEMA 21 internalnya.
+    if state != SymState::Blocked {
+        for &id in ids {
+            let scalp_sig = match id {
+                StrategyId::S01Sweep => evaluate_s01_sweep(&sym.symbol, &sym.long.m15, t, sym.entry_tf, p, None),
+                StrategyId::S02Sniper => evaluate_s02_sniper(&sym.symbol, &sym.long.m15, t, sym.entry_tf, p, None),
+                _ => None,
+            };
+            if let Some(sig) = scalp_sig {
+                if sig.entry.is_finite() && sig.sl.is_finite() && sig.entry > 0.0 && sig.sl > 0.0 {
+                    out.push(sig);
+                }
+            }
+        }
+    }
+    // 2. Evaluasi strategi S1-S5 (long & short mirror)
     for s in [&sym.long, &sym.short] {
         let v = make_view(sym, s, t, state);
         if !v.trend_ok {
             continue;
         }
         for &id in ids {
+            if id.is_yahudi_scalp() {
+                continue;
+            }
             if let Some(r) = run_one(id, &v, p) {
                 let sig = to_real(id, &v, r);
                 if sig.entry.is_finite() && sig.sl.is_finite() && sig.entry > 0.0 && sig.sl > 0.0 {
@@ -510,6 +569,7 @@ pub fn run_one(id: StrategyId, v: &View, p: &StrategyParams) -> Option<RawSignal
         StrategyId::S3Sbr => s3_sbr(v, p),
         StrategyId::S4Wsl => s4_wsl(v, p),
         StrategyId::S5Rmp => s5_rmp(v, p),
+        StrategyId::S01Sweep | StrategyId::S02Sniper => None,
     }
 }
 pub mod ofcc_watch;

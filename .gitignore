@@ -1,11 +1,29 @@
+# Build artifacts
 /target
 /target-msvc/
+
+# Secrets & environment files (NEVER commit credentials)
 .env
 .env.*
 !.env.example
+
+# Runtime data, backtest outputs, state & logs
 /data/
 /reports/
+/research/
 /state/
 /logs/
 *.log
 KILL
+
+# Dashboard runtime caches, screenshots & temporary debug scripts
+dashboard/__pycache__/
+**/__pycache__/
+*.pyc
+dashboard/cache_*.json
+dashboard/shots/
+dashboard/_*
+dashboard/library/notes.jsonl
+
+# Incomplete legacy scratch crate (superseded by apex-screener & apex-indicators)
+/crates/microstructure/

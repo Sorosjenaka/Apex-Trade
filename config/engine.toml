@@ -4,8 +4,8 @@
 mode = "paper"          # paper | testnet | live  (CLI `apex run --mode` menimpa ini)
 arm = false             # GR-9: hanya user yang mengubah. Tidak ada flag CLI untuk ini.
 
-# Kosong = default 11 alt (ETH SOL XRP DOGE SUI LINK ENA NEAR 1000PEPE HYPE WLD). Branch research/btceth: 2 pair BTCUSDT + ETHUSDT.
-universe = ["BTCUSDT", "ETHUSDT"]
+# Curated Liquid Majors (minNotional <= $47 pada risiko $1/trade + BTCUSDT sebagai penggerak MarketReader)
+universe = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "NEARUSDT", "WLDUSDT"]
 
 data_dir = "data"
 state_dir = "state"
@@ -26,4 +26,4 @@ protection_retries = 3
 orphan_policy = "place_sl"       # place_sl | flatten
 flatten_on_kill = false
 protective_close_position = true # SL/TP algo closePosition=true; false = quantity+reduceOnly
-poll_interval_secs = 5
+poll_interval_secs = 15

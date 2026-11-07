@@ -211,6 +211,69 @@ fn gate_v(name: &str, ok: bool, sample_ok: bool, detail: String) -> bool {
     ok && sample_ok
 }
 
+/// Verifikasi G-01: (1) validitas & checksum deterministik seluruh bar input, (2) prefix replay [start, mid) bebas look-ahead.
+fn verify_g01(mkt: &MarketInput, c: &BacktestConfig, r: &BacktestReport) -> (bool, String) {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut bars_ok = true;
+    let check_slice = |bars: &[apex_core::types::Bar], h: &mut std::collections::hash_map::DefaultHasher, ok: &mut bool| {
+        bars.len().hash(h);
+        for w in bars.windows(2) {
+            if w[1].open_time <= w[0].open_time {
+                *ok = false;
+            }
+        }
+        for b in bars {
+            if !b.is_valid() {
+                *ok = false;
+            }
+            b.open_time.hash(h);
+            b.close.to_bits().hash(h);
+            b.volume.to_bits().hash(h);
+        }
+    };
+    check_slice(&mkt.btc_m15, &mut h, &mut bars_ok);
+    check_slice(&mkt.btc_h1, &mut h, &mut bars_ok);
+    if let Some(m5) = &mkt.btc_m5 {
+        check_slice(m5, &mut h, &mut bars_ok);
+    }
+    for s in &mkt.symbols {
+        s.symbol.hash(&mut h);
+        check_slice(&s.m15, &mut h, &mut bars_ok);
+        check_slice(&s.h1, &mut h, &mut bars_ok);
+        if let Some(m5) = &s.m5 {
+            check_slice(m5, &mut h, &mut bars_ok);
+        }
+    }
+    let checksum = h.finish();
+    let mid = c.start + (c.end - c.start) / 2;
+    let mut pc = c.clone();
+    pc.end = mid;
+    let prefix_ok = match run_backtest(mkt, &pc) {
+        Ok(pr) => {
+            let p_trades: Vec<_> = pr.trades.iter().filter(|t| t.exit_kind != apex_core::risk::ExitKind::EndOfData).collect();
+            let f_trades: Vec<_> = r.trades.iter().filter(|t| t.exit_ms < mid && t.exit_kind != apex_core::risk::ExitKind::EndOfData).collect();
+            p_trades.len() == f_trades.len()
+                && p_trades.iter().zip(f_trades.iter()).all(|(a, b)| {
+                    a.symbol == b.symbol
+                        && a.side == b.side
+                        && a.signal_ms == b.signal_ms
+                        && a.entry_ms == b.entry_ms
+                        && a.exit_ms == b.exit_ms
+                        && (a.entry - b.entry).abs() < 1e-9
+                        && (a.exit - b.exit).abs() < 1e-9
+                })
+        }
+        Err(_) => false,
+    };
+    let ok = r.data_gaps == 0 && bars_ok && prefix_ok;
+    let detail = format!(
+        "{} data gaps; checksum={checksum:016x} valid={bars_ok}; prefix_replay={prefix_ok}",
+        r.data_gaps
+    );
+    (ok, detail)
+}
+
 /// Independent segment: signal, entry and real exit must all be within [from, to).
 /// EndOfData is a mark-to-market, not a completed trade.
 fn seg_trades(trades: &[Trade], from: i64, to: i64) -> Vec<Trade> {
@@ -765,7 +828,8 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         print_metrics("VAL (segmen Rules)", &m_val);
         print_metrics("stress full", &rs.metrics);
         print_metrics("stress VAL", &m_stress_val);
-        let mut all = gate_v("G-01 data, checksum and prefix replay", r.data_gaps == 0, false, format!("{} data gaps; checksum/prefix not verified", r.data_gaps));
+        let (g01_ok, g01_detail) = verify_g01(&mkt, &c, &r);
+        let mut all = gate_v("G-01 data, checksum and prefix replay", g01_ok, g01_ok, g01_detail);
         all &= gate_v("G-02 sampel IS≥100 & VAL≥60 (Rules G-02; kurang → INCONCLUSIVE)", g02_ok, g02_ok, format!("IS={} (min 100), VAL={} (min 60), total={}", n_is, n_val, m.trades));
         all &= gate_v("G-03 expectancy VAL ≥ +0.10R", g03_pass(m_val.expectancy_r), g02_ok, format!("{:+.3}R (VAL {} trade)", m_val.expectancy_r, n_val));
         all &= gate_v("G-04 PF VAL ≥ 1.25", g04_pass(m_val.profit_factor), g02_ok, format!("{} (VAL)", pf_print(m_val.profit_factor)));
@@ -839,7 +903,7 @@ pub fn validate(cfg: &AllConfig, a: &BtArgs) -> anyhow::Result<()> {
         gate_row["g10_raw_pass"] = serde_json::json!(g10_pass(m.net_usd, m.max_symbol_profit_share, m.max_month_profit_share));
         gate_row["stress_full_e"] = serde_json::json!(fnum(rs.metrics.expectancy_r));
         gate_row["stress_full_pf"] = serde_json::json!(fnum(rs.metrics.profit_factor));
-        gate_row["g01_verified"] = serde_json::json!(false);
+        gate_row["g01_verified"] = serde_json::json!(g01_ok);
         gate_row["g06_refit_available"] = serde_json::json!(true);
         gate_row["g09_sweep_diagnostic_pass"] = serde_json::json!(plateau.pass);
         gate_row["g09_raw_pass"] = serde_json::json!(plateau.pass);

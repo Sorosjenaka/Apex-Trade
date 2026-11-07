@@ -1,8 +1,9 @@
 //! Klien REST PUBLIC Binance USDⓈ-M (tanpa API key, tanpa signature).
 //! Menghormati X-MBX-USED-WEIGHT-1M, backoff 429 / 418 (IP ban) dengan Retry-After.
+use apex_core::time::now_ms;
 use apex_core::types::{Bar, Ms, Tf};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 pub struct PublicClient {
@@ -10,6 +11,7 @@ pub struct PublicClient {
     http: reqwest::Client,
     pub used_weight: AtomicU64,
     pub weight_soft_limit: u64,
+    pub ban_until_ms: AtomicI64,
 }
 
 fn num(v: &Value) -> f64 {
@@ -45,12 +47,24 @@ impl PublicClient {
     pub fn new(base: &str) -> anyhow::Result<PublicClient> {
         crate::init_tls();
         let http = reqwest::Client::builder().timeout(Duration::from_secs(15)).user_agent("apex-scalper-rs/0.1").build()?;
-        Ok(PublicClient { base: base.trim_end_matches('/').to_string(), http, used_weight: AtomicU64::new(0), weight_soft_limit: 1800 })
+        Ok(PublicClient {
+            base: base.trim_end_matches('/').to_string(),
+            http,
+            used_weight: AtomicU64::new(0),
+            weight_soft_limit: 900,
+            ban_until_ms: AtomicI64::new(0),
+        })
     }
 
     pub async fn get(&self, path: &str, query: &[(&str, String)]) -> anyhow::Result<Value> {
         let mut backoff = 1u64;
         for attempt in 0..6 {
+            let now = now_ms();
+            let ban_until = self.ban_until_ms.load(Ordering::Relaxed);
+            if now < ban_until {
+                let rem_s = ((ban_until - now) / 1000).max(1);
+                anyhow::bail!("cooldown rate-limit aktif ({rem_s}s tersisa) — melewati {path} tanpa request");
+            }
             if self.used_weight.load(Ordering::Relaxed) > self.weight_soft_limit {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 self.used_weight.store(0, Ordering::Relaxed);
@@ -72,9 +86,11 @@ impl PublicClient {
             let st = resp.status().as_u16();
             if st == 429 || st == 418 {
                 let ra = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(if st == 418 { 120 } else { 30 });
-                tracing::warn!("HTTP {st} rate limit pada {path}; tidur {ra}s");
+                let until = now_ms() + (ra as i64) * 1000;
+                self.ban_until_ms.store(until, Ordering::Relaxed);
+                tracing::warn!("HTTP {st} rate limit pada {path}; cooldown {ra}s");
                 if st == 418 {
-                    anyhow::bail!("HTTP 418: IP diblokir sementara oleh Binance (Retry-After {ra}s) — berhenti");
+                    anyhow::bail!("HTTP 418: IP cooldown sementara oleh Binance (Retry-After {ra}s)");
                 }
                 tokio::time::sleep(Duration::from_secs(ra)).await;
                 continue;
@@ -107,6 +123,9 @@ impl PublicClient {
     }
     pub async fn premium_index(&self) -> anyhow::Result<Value> {
         self.get("/fapi/v1/premiumIndex", &[]).await
+    }
+    pub async fn premium_index_symbol(&self, sym: &str) -> anyhow::Result<Value> {
+        self.get("/fapi/v1/premiumIndex", &[("symbol", sym.into())]).await
     }
     pub async fn depth(&self, sym: &str, limit: u32) -> anyhow::Result<Value> {
         self.get("/fapi/v1/depth", &[("symbol", sym.into()), ("limit", limit.to_string())]).await
