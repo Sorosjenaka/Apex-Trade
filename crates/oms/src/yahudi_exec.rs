@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 
 use apex_core::types::Ms;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+
+use crate::telemetry::TradeTelemetry;
 
 // ============================================================================
 // 1. 4-Layer Cooldown, Anti-Churn & Symbol Probation Guard (Yahudi-Bot RiskGuard)
@@ -122,7 +125,7 @@ impl YahudiCooldownGuard {
 // 3. Automated Mistake Classifier & If-Then Playbook Engine (Package D)
 // ============================================================================
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum MistakeTag {
     None,
     ImpulseChase,
@@ -131,6 +134,7 @@ pub enum MistakeTag {
     ChopWhipsaw,
     StopTooTight,
     NormalVariance,
+    InsufficientData,
 }
 
 impl MistakeTag {
@@ -143,39 +147,54 @@ impl MistakeTag {
             MistakeTag::ChopWhipsaw => "CHOP_WHIPSAW",
             MistakeTag::StopTooTight => "STOP_TOO_TIGHT",
             MistakeTag::NormalVariance => "NORMAL_VARIANCE",
+            MistakeTag::InsufficientData => "INSUFFICIENT_DATA",
         }
     }
 }
 
-/// Klasifikasi otomatis penyebab loss (`mistakeClassifier.ts` di `Yahudi-Bot`).
-pub fn classify_trade_mistake(
-    net_pnl_usd: f64,
-    hold_duration_ms: Ms,
-    spread_pct_at_entry: f64,
-    slippage_bps: f64,
-    cvd_aligned_at_entry: bool,
-    chop_14_at_entry: f64,
-    sl_pct_at_entry: f64,
-) -> MistakeTag {
-    if net_pnl_usd >= 0.0 {
+/// Klasifikasi penyebab loss berbasis bukti terukur (`WP-6`).
+/// Nilai `Option::None` tidak pernah menyalakan tag terkait; bila trade merugi dan tidak ada
+/// anomali terukur yang menyala sementara data konteks tidak lengkap, dikembalikan `InsufficientData`.
+pub fn classify_trade_mistake(t: &TradeTelemetry) -> MistakeTag {
+    if t.pnl_net_usd >= Decimal::ZERO && t.r_multiple >= Decimal::ZERO {
         return MistakeTag::None;
     }
-    if spread_pct_at_entry > 0.0012 {
+    let hold_ms = t
+        .closed_ms
+        .saturating_sub(t.filled_ms.unwrap_or(t.created_ms));
+    let ctx = t.entry_ctx.as_ref();
+
+    if ctx
+        .and_then(|c| c.spread_bps)
+        .is_some_and(|bps| bps > Decimal::new(12, 0))
+    {
         return MistakeTag::SpreadBlowout;
     }
-    if slippage_bps > 8.0 {
+    if !t.fills.paper_slip_zero_by_construction && t.fills.entry_slip_bps > Decimal::new(8, 0) {
         return MistakeTag::ImpulseChase;
     }
-    if !cvd_aligned_at_entry {
+    if ctx.and_then(|c| c.cvd_aligned) == Some(false) {
         return MistakeTag::CounterCvd;
     }
-    if hold_duration_ms < 5 * 60 * 1000 && sl_pct_at_entry < 0.021 {
+    let planned_sl_pct = ctx.and_then(|c| {
+        (c.planned_entry > Decimal::ZERO)
+            .then(|| (c.planned_entry - c.planned_sl).abs() / c.planned_entry)
+    });
+    if hold_ms < 5 * 60 * 1000 && planned_sl_pct.is_some_and(|pct| pct < Decimal::new(21, 3)) {
         return MistakeTag::StopTooTight;
     }
-    if hold_duration_ms < 10 * 60 * 1000 && chop_14_at_entry > 58.0 {
+    if hold_ms < 10 * 60 * 1000 && ctx.and_then(|c| c.chop).is_some_and(|ch| ch > 58.0) {
         return MistakeTag::ChopWhipsaw;
     }
-    MistakeTag::NormalVariance
+    let missing_obs = match ctx {
+        None => true,
+        Some(c) => c.spread_bps.is_none() || c.cvd_aligned.is_none() || c.chop.is_none(),
+    };
+    if missing_obs {
+        MistakeTag::InsufficientData
+    } else {
+        MistakeTag::NormalVariance
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

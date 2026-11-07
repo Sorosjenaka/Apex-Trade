@@ -775,31 +775,15 @@ fn sync_closed_trades<E: FuturesExchange>(
         let pnl = ct.pnl_net.unwrap_or(0.0);
         let reason = tel.exit_kind.as_str().to_string();
         let closed_ts = ct.closed_ms.unwrap_or(now);
-        let hold_ms = closed_ts.saturating_sub(ct.filled_ms.unwrap_or(ct.created_ms));
-        let sl_pct = if ct.entry_price > rust_decimal::Decimal::ZERO {
-            to_f64((ct.entry_price - ct.sl).abs() / ct.entry_price)
-        } else {
-            0.02
-        };
         st.yahudi_cooldown
             .on_trade_closed(&ct.symbol, closed_ts, pnl, &reason, cfg.risk.risk_usd);
-        let mistake =
-            apex_oms::classify_trade_mistake(pnl, hold_ms, 0.0003, 0.0, true, 50.0, sl_pct);
+        let mistake = apex_oms::classify_trade_mistake(&tel);
         st.playbook.record_mistake(mistake);
-        let (mfe_r, mae_r) = tel
-            .excursion
-            .as_ref()
-            .map(|e| (to_f64(e.mfe_r), to_f64(e.mae_r)))
-            .unwrap_or((0.0, 0.0));
-        let five_whys = apex_oms::generate_five_whys_forensics(
-            &ct.symbol,
-            &ct.strategy,
-            pnl,
-            to_f64(tel.r_multiple),
-            mfe_r,
-            mae_r,
-            mistake.as_str(),
-        );
+        let five_whys = apex_oms::build_five_whys_with_gate(&tel, to_dec(cfg.risk.max_spread_bps));
+        if let Some(prop) = five_whys.as_ref().and_then(|fw| fw.proposal.as_ref()) {
+            let _ =
+                apex_oms::append_jsonl_record(Path::new("audit/forensics_proposals.jsonl"), prop);
+        }
         mgr.audit.log(closed_ts, "YAHUDI_POST_TRADE", serde_json::json!({
             "symbol": ct.symbol, "strategy": ct.strategy, "pnl_net": pnl, "close_reason": reason,
             "mistake_tag": mistake.as_str(), "five_whys": five_whys,

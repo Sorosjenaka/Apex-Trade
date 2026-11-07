@@ -18,6 +18,7 @@ pub mod artatrade_exec;
 pub mod binance;
 pub mod creds;
 pub mod exchange;
+pub mod forensics;
 pub mod killswitch;
 pub mod manager;
 pub mod mock;
@@ -32,6 +33,7 @@ pub mod yahudi_exec;
 
 pub use artatrade_exec::*;
 pub use exchange::FuturesExchange;
+pub use forensics::*;
 pub use manager::{EntryIntent, ManagedTrade, OrderManager, TradeState};
 pub use notifier::{HttpWebhookNotifier, NoopNotifier, Notifier, NotifyPayload, RecordingNotifier};
 pub use safety::{authorize, ExecMode, SafetyError};

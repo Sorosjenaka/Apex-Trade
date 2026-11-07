@@ -19,4 +19,4 @@ This document outlines the operational cycle of **Apex Trade** from market inges
 ## 3. Supervision & Post-Mortem Learning
 
 1. **Active Protection:** Conditional `STOP_MARKET` and `TAKE_PROFIT_MARKET` orders protect every filled position; `TrendFlipConfirmationGuard` exits early if consecutive closed bars confirm a reversal.
-2. **Forensic Feedback Loop:** Closed trades trigger `generate_five_whys_forensics`, update Wilson 95% lower-bound win-rate statistics, and generate bounded tuning proposals validated offline via `apex backtest` and CPCV.
+2. **Forensic Feedback Loop:** Losing closed trades trigger evidence-based `build_five_whys` diagnostics (winners are recorded without RCA), writing pre-registration hypotheses to `audit/forensics_proposals.jsonl` without auto-applying parameter changes.

@@ -1375,92 +1375,6 @@ pub fn summarize_observed_probability(pnls_usd: &[f64]) -> ObservedProbabilitySu
     }
 }
 
-pub const FIVE_WHYS_LAYER_FOCUS: [&str; 5] = [
-    "GEJALA_DEVIASI_EKSEKUSI",
-    "ALASAN_TAKTIKAL_CHART",
-    "ASUMSI_DATA_INDIKATOR",
-    "PARAMETER_SIZING_BIAS",
-    "CELAH_PLAYBOOK_ATURAN",
-];
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct WhyLayer {
-    pub layer: u8,
-    pub focus: &'static str,
-    pub answer: String,
-    pub status: &'static str,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct FiveWhysForensicReport {
-    pub symbol: String,
-    pub strategy_id: String,
-    pub execution_mistake: String,
-    pub layers: Vec<WhyLayer>,
-    pub terminated: &'static str,
-}
-
-/// Diagnosis 5-Whys Root Cause Analysis pasca-trade (`fiveWhys.ts:runFiveWhysDiagnosis`).
-pub fn generate_five_whys_forensics(
-    symbol: &str,
-    strategy_id: &str,
-    pnl_usd: f64,
-    r_multiple: f64,
-    mfe_r: f64,
-    mae_r: f64,
-    mistake: &str,
-) -> FiveWhysForensicReport {
-    let layers = vec![
-        WhyLayer {
-            layer: 1,
-            focus: FIVE_WHYS_LAYER_FOCUS[0],
-            answer: format!(
-                "{} ({}) ditutup dengan PnL ${:.4} ({:.2}R), MFE {:.2}R vs MAE {:.2}R; terdeteksi klasifikasi {}.",
-                symbol, strategy_id, pnl_usd, r_multiple, mfe_r, mae_r, mistake
-            ),
-            status: "HYPOTHESIS",
-        },
-        WhyLayer {
-            layer: 2,
-            focus: FIVE_WHYS_LAYER_FOCUS[1],
-            answer: if mfe_r >= 0.7 && r_multiple < 0.0 {
-                "Harga sempat bergerak searah setup >=0.7R namun berbalik sebelum mencapai target 1.7R akibat impuls likuiditas lawan.".into()
-            } else {
-                "Ekspansi harga pasca-entry langsung menguji batas invalidasi struktural tanpa follow-through agresor.".into()
-            },
-            status: "HYPOTHESIS",
-        },
-        WhyLayer {
-            layer: 3,
-            focus: FIVE_WHYS_LAYER_FOCUS[2],
-            answer: "Konfluensi indikator bar tertutup belum mengantisipasi penyerapan pasif (eaten/pulled wall) pada level mikrostruktur.".into(),
-            status: "HYPOTHESIS",
-        },
-        WhyLayer {
-            layer: 4,
-            focus: FIVE_WHYS_LAYER_FOCUS[3],
-            answer: "Rasio SL/ATR pada pita SCALP 2%-4% menjaga risiko tetap $1.00, namun membutuhkan filter pullBiasThreshold / CVD yang ketat.".into(),
-            status: "HYPOTHESIS",
-        },
-        WhyLayer {
-            layer: 5,
-            focus: FIVE_WHYS_LAYER_FOCUS[4],
-            answer: format!(
-                "Aturan Playbook If-Then: bila {} berulang >=2x pada {}, aktifkan cooldown 60 menit dan wajibkan konfirmasi CVD + 5m body.",
-                mistake, symbol
-            ),
-            status: "HYPOTHESIS",
-        },
-    ];
-    FiveWhysForensicReport {
-        symbol: symbol.to_uppercase(),
-        strategy_id: strategy_id.to_string(),
-        execution_mistake: mistake.to_string(),
-        layers,
-        terminated: "COMPLETE",
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BoundedTunerProposal {
     pub param: &'static str,
@@ -1548,17 +1462,42 @@ mod tests {
         assert_eq!(summary.wins, 5);
         assert!(summary.wilson95_pct.is_some());
 
-        let fw = generate_five_whys_forensics(
-            "HAEDALUSDT",
-            "S-02",
-            -1.0,
-            -1.0,
-            0.85,
-            1.0,
-            "REVERSAL_AFTER_MFE",
-        );
+        let tel = crate::telemetry::TradeTelemetry {
+            schema: crate::telemetry::TELEMETRY_SCHEMA_VERSION,
+            trade_id: "T-DIAG".into(),
+            symbol: "HAEDALUSDT".into(),
+            strategy: "S02".into(),
+            validated: false,
+            side: Side::Long,
+            created_ms: 1_000,
+            filled_ms: Some(2_000),
+            fill_confirmed_at: Some(2_000),
+            sl_placed_ms: Some(2_300),
+            unprotected_ms: Some(300),
+            closed_ms: 910_000,
+            entry_price: rust_decimal::Decimal::from(100),
+            exit_price: rust_decimal::Decimal::from(97),
+            planned_risk_usd: rust_decimal::Decimal::ONE,
+            pnl_net_usd: -rust_decimal::Decimal::ONE,
+            r_multiple: -rust_decimal::Decimal::ONE,
+            exit_kind: crate::telemetry::TelemetryExitKind::SlHit,
+            entry_ctx: None,
+            excursion: Some(crate::telemetry::TradeExcursion {
+                mfe_r: rust_decimal::Decimal::new(85, 2),
+                mae_r: rust_decimal::Decimal::ONE,
+                bars_in_trade: 1,
+                mfe_ts: Some(900_000),
+                mae_ts: Some(900_000),
+                resolution: "15m_closed_bar".into(),
+            }),
+            fills: crate::telemetry::FillSummary::default(),
+        };
+        let fw = crate::forensics::build_five_whys(&tel).unwrap();
         assert_eq!(fw.layers.len(), 5);
-        assert_eq!(fw.terminated, "COMPLETE");
+        assert_eq!(
+            fw.terminated,
+            crate::forensics::RcaTermination::RootCauseSupported
+        );
     }
 
     #[test]
