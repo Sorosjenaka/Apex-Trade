@@ -135,17 +135,24 @@ impl StateStore {
         })
     }
 
+    fn take_fail_token(&self) -> bool {
+        let mut cur = self.fail_saves_remaining.load(Ordering::SeqCst);
+        while cur > 0 {
+            match self.fail_saves_remaining.compare_exchange_weak(
+                cur,
+                cur - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(next) => cur = next,
+            }
+        }
+        false
+    }
+
     pub fn save<T: Serialize>(&self, v: &T) -> Result<(), StoreError> {
-        let prev =
-            self.fail_saves_remaining
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
-                    if x > 0 {
-                        Some(x - 1)
-                    } else {
-                        None
-                    }
-                });
-        if prev.is_ok() {
+        if self.take_fail_token() {
             return Err(StoreError::SimulatedFailure);
         }
         let Some(p) = &self.path else {

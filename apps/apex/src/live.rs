@@ -1,4 +1,8 @@
 //! Perintah berbasis data PUBLIK (fetch, reader, screen, record) + loop `run`.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 use crate::cfg::{filters_from_ei, AllConfig};
 use apex_backtest::context::{AltInput, RegimeTimeline};
 use apex_backtest::screener_states;
@@ -26,16 +30,32 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn num(v: &Value) -> f64 {
-    v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_f64()).unwrap_or(f64::NAN)
+    v.as_str()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| v.as_f64())
+        .unwrap_or(f64::NAN)
 }
 
 fn fetch_intervals(only_5m: bool) -> &'static [Tf] {
-    if only_5m { &[Tf::M5] } else { &[Tf::M15, Tf::H1] }
+    if only_5m {
+        &[Tf::M5]
+    } else {
+        &[Tf::M15, Tf::H1]
+    }
 }
 
-pub async fn fetch(cfg: &AllConfig, data: &Path, from: &str, to: &str, only_5m: bool) -> anyhow::Result<()> {
+pub async fn fetch(
+    cfg: &AllConfig,
+    data: &Path,
+    from: &str,
+    to: &str,
+    only_5m: bool,
+) -> anyhow::Result<()> {
     let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
-    let (s, e) = (parse_ymd(from).ok_or_else(|| anyhow::anyhow!("--from"))?, parse_ymd(to).ok_or_else(|| anyhow::anyhow!("--to"))?);
+    let (s, e) = (
+        parse_ymd(from).ok_or_else(|| anyhow::anyhow!("--from"))?,
+        parse_ymd(to).ok_or_else(|| anyhow::anyhow!("--to"))?,
+    );
     let now = now_ms();
     let mut syms = vec!["BTCUSDT".to_string(), "BTCDOMUSDT".to_string()];
     syms.extend(cfg.universe());
@@ -77,7 +97,14 @@ pub struct Snapshot {
 }
 
 /// Ambil bar tertutup terakhir dari REST, atau fallback ke CSV lokal bila sedang cooldown rate-limit.
-async fn recent_closed_or_csv(pc: &PublicClient, data_dir: &Path, sym: &str, tf: Tf, n: usize, now: Ms) -> anyhow::Result<Vec<Bar>> {
+async fn recent_closed_or_csv(
+    pc: &PublicClient,
+    data_dir: &Path,
+    sym: &str,
+    tf: Tf,
+    n: usize,
+    now: Ms,
+) -> anyhow::Result<Vec<Bar>> {
     match pc.recent_closed(sym, tf, n, now).await {
         Ok(v) if !v.is_empty() => Ok(v),
         Err(e) => {
@@ -98,17 +125,33 @@ async fn recent_closed_or_csv(pc: &PublicClient, data_dir: &Path, sym: &str, tf:
     }
 }
 
+#[allow(dead_code)]
 pub async fn snapshot(pc: &PublicClient, universe: &[String], now: Ms) -> anyhow::Result<Snapshot> {
     snapshot_with_cfg(pc, Path::new("data"), universe, false, now).await
 }
 
-pub async fn snapshot_with_cfg(pc: &PublicClient, data_dir: &Path, universe: &[String], want_5m: bool, now: Ms) -> anyhow::Result<Snapshot> {
+pub async fn snapshot_with_cfg(
+    pc: &PublicClient,
+    data_dir: &Path,
+    universe: &[String],
+    want_5m: bool,
+    now: Ms,
+) -> anyhow::Result<Snapshot> {
     let btc_m15 = recent_closed_or_csv(pc, data_dir, "BTCUSDT", Tf::M15, 450, now).await?;
     let btc_h1 = recent_closed_or_csv(pc, data_dir, "BTCUSDT", Tf::H1, 800, now).await?;
-    let dom_h1 = recent_closed_or_csv(pc, data_dir, "BTCDOMUSDT", Tf::H1, 450, now).await.ok().filter(|v| !v.is_empty());
+    let dom_h1 = recent_closed_or_csv(pc, data_dir, "BTCDOMUSDT", Tf::H1, 450, now)
+        .await
+        .ok()
+        .filter(|v| !v.is_empty());
     // Optional shadow-only daily context; failures never change trading gates.
-    let btc_daily = recent_closed_or_csv(pc, data_dir, "BTCUSDT", Tf::D1, 250, now).await.ok().filter(|v| !v.is_empty());
-    let eth_daily = recent_closed_or_csv(pc, data_dir, "ETHUSDT", Tf::D1, 250, now).await.ok().filter(|v| !v.is_empty());
+    let btc_daily = recent_closed_or_csv(pc, data_dir, "BTCUSDT", Tf::D1, 250, now)
+        .await
+        .ok()
+        .filter(|v| !v.is_empty());
+    let eth_daily = recent_closed_or_csv(pc, data_dir, "ETHUSDT", Tf::D1, 250, now)
+        .await
+        .ok()
+        .filter(|v| !v.is_empty());
     let mut syms = Vec::new();
     let mut syms_m5 = BTreeMap::new();
     for s in universe {
@@ -132,13 +175,23 @@ pub async fn snapshot_with_cfg(pc: &PublicClient, data_dir: &Path, universe: &[S
             _ => eprintln!("  [lewati] {s}: klines gagal"),
         }
     }
-    Ok(Snapshot { btc_m15, btc_h1, dom_h1, btc_daily, eth_daily, syms, syms_m5 })
+    Ok(Snapshot {
+        btc_m15,
+        btc_h1,
+        dom_h1,
+        btc_daily,
+        eth_daily,
+        syms,
+        syms_m5,
+    })
 }
 
 /// MR-09 is informational only and does not alter the regime decision.
 fn reversal_shadow(s: &Snapshot) -> Option<(Ms, f64, f64)> {
     let eth = s.syms.iter().find(|(symbol, _, _)| symbol == "ETHUSDT")?;
-    apex_market_reader::reversal::shadow_scores(&s.btc_h1, &eth.2)?.last().copied()
+    apex_market_reader::reversal::shadow_scores(&s.btc_h1, &eth.2)?
+        .last()
+        .copied()
 }
 
 /// Independent uncalibrated stage/Fibonacci evidence, never used to gate trades.
@@ -146,26 +199,44 @@ fn reversal_details(s: &Snapshot) -> Option<serde_json::Value> {
     use apex_market_reader::reversal_context::{closed_context, hourly_context};
     let eth = s.syms.iter().find(|(symbol, _, _)| symbol == "ETHUSDT")?;
     let as_of = s.btc_h1.last()?.open_time + Tf::H1.ms();
-    let build = |h: &[Bar], daily: &Option<Vec<Bar>>| serde_json::json!({
-        "1h": hourly_context(h, 1, as_of), "2h": hourly_context(h, 2, as_of),
-        "4h": hourly_context(h, 4, as_of),
-        "1d": daily.as_ref().and_then(|v| closed_context(v, 24, as_of))
-    });
-    Some(serde_json::json!({"as_of": as_of, "btc": build(&s.btc_h1, &s.btc_daily), "eth": build(&eth.2, &s.eth_daily)}))
+    let build = |h: &[Bar], daily: &Option<Vec<Bar>>| {
+        serde_json::json!({
+            "1h": hourly_context(h, 1, as_of), "2h": hourly_context(h, 2, as_of),
+            "4h": hourly_context(h, 4, as_of),
+            "1d": daily.as_ref().and_then(|v| closed_context(v, 24, as_of))
+        })
+    };
+    Some(
+        serde_json::json!({"as_of": as_of, "btc": build(&s.btc_h1, &s.btc_daily), "eth": build(&eth.2, &s.eth_daily)}),
+    )
 }
 
 /// Keputusan regime pada close 15m terakhir; mesin dihangatkan 96 close sebelumnya (histeresis).
+#[allow(dead_code)]
 pub fn decide(s: &Snapshot) -> Option<RegimeDecision> {
     decide_with_chop(s, apex_market_reader::ChopThresholds::default())
 }
 
-pub fn decide_with_chop(s: &Snapshot, chop: apex_market_reader::ChopThresholds) -> Option<RegimeDecision> {
-    let closes: Vec<Ms> = s.btc_m15.iter().rev().take(96).rev().map(|b| b.open_time + Tf::M15.ms()).collect();
+pub fn decide_with_chop(
+    s: &Snapshot,
+    chop: apex_market_reader::ChopThresholds,
+) -> Option<RegimeDecision> {
+    let closes: Vec<Ms> = s
+        .btc_m15
+        .iter()
+        .rev()
+        .take(96)
+        .rev()
+        .map(|b| b.open_time + Tf::M15.ms())
+        .collect();
     let btc_last_h1 = s.btc_h1.last().map(|b| b.open_time).unwrap_or(0);
     let synced_alts: Vec<AltInput> = s
         .syms
         .iter()
-        .filter(|x| x.2.last().is_some_and(|b| b.open_time + 2 * Tf::H1.ms() >= btc_last_h1))
+        .filter(|x| {
+            x.2.last()
+                .is_some_and(|b| b.open_time + 2 * Tf::H1.ms() >= btc_last_h1)
+        })
         .map(|x| AltInput { h1: &x.2 })
         .collect();
     let alts: Vec<AltInput> = if synced_alts.is_empty() {
@@ -173,10 +244,10 @@ pub fn decide_with_chop(s: &Snapshot, chop: apex_market_reader::ChopThresholds) 
     } else {
         synced_alts
     };
-    let dom = s
-        .dom_h1
-        .as_deref()
-        .filter(|d| d.last().is_some_and(|b| b.open_time + 2 * Tf::H1.ms() >= btc_last_h1));
+    let dom = s.dom_h1.as_deref().filter(|d| {
+        d.last()
+            .is_some_and(|b| b.open_time + 2 * Tf::H1.ms() >= btc_last_h1)
+    });
     let tl = RegimeTimeline::build(&s.btc_m15, &s.btc_h1, dom, &alts, &closes, false, chop);
     tl.decisions.last().cloned()
 }
@@ -185,16 +256,38 @@ pub async fn reader(cfg: &AllConfig) -> anyhow::Result<()> {
     let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
     let now = now_ms();
     let s = snapshot_with_cfg(&pc, &cfg.engine.data_dir, &cfg.universe(), false, now).await?;
-    let d = decide_with_chop(&s, cfg.screener.chop).ok_or_else(|| anyhow::anyhow!("data kurang"))?;
-    println!("Market Reader @ {} (bar 15m tertutup terakhir: {})", fmt_utc(now), s.btc_m15.last().map(|b| fmt_utc(b.open_time + Tf::M15.ms())).unwrap_or_default());
-    println!("  state     : {}  (raw {})", d.state.as_str(), d.raw.as_str());
-    println!("  long_ok={} short_ok={} universe={:?} max_pos={}", d.long_ok, d.short_ok, d.universe, d.max_positions);
+    let d =
+        decide_with_chop(&s, cfg.screener.chop).ok_or_else(|| anyhow::anyhow!("data kurang"))?;
+    println!(
+        "Market Reader @ {} (bar 15m tertutup terakhir: {})",
+        fmt_utc(now),
+        s.btc_m15
+            .last()
+            .map(|b| fmt_utc(b.open_time + Tf::M15.ms()))
+            .unwrap_or_default()
+    );
+    println!(
+        "  state     : {}  (raw {})",
+        d.state.as_str(),
+        d.raw.as_str()
+    );
+    println!(
+        "  long_ok={} short_ok={} universe={:?} max_pos={}",
+        d.long_ok, d.short_ok, d.universe, d.max_positions
+    );
     println!("  alasan    : {}", d.reasons.join("; "));
     match reversal_shadow(&s) {
-        Some((ts, up, down)) => println!("  MR-09 shadow @ {}: up={:.2} down={:.2}", fmt_utc(ts), up, down),
+        Some((ts, up, down)) => println!(
+            "  MR-09 shadow @ {}: up={:.2} down={:.2}",
+            fmt_utc(ts),
+            up,
+            down
+        ),
         None => println!("  MR-09 shadow: data tidak cukup atau tidak sinkron"),
     }
-    if let Some(details) = reversal_details(&s) { println!("  MR-09 stage/Fib shadow: {details}"); }
+    if let Some(details) = reversal_details(&s) {
+        println!("  MR-09 stage/Fib shadow: {details}");
+    }
     match apex_data::tv::scan(&["CRYPTOCAP:BTC.D", "CRYPTOCAP:TOTAL", "CRYPTOCAP:TOTAL3"]).await {
         Ok(m) => {
             for (k, (c, ch)) in m {
@@ -213,7 +306,11 @@ pub struct LiveMeta {
     pub qv_rank: Vec<String>,
 }
 
-pub async fn live_meta(pc: &PublicClient, cfg: &AllConfig, depth_for: &[String]) -> anyhow::Result<LiveMeta> {
+pub async fn live_meta(
+    pc: &PublicClient,
+    cfg: &AllConfig,
+    depth_for: &[String],
+) -> anyhow::Result<LiveMeta> {
     let ei = match pc.exchange_info().await {
         Ok(v) => v,
         Err(_) => {
@@ -223,7 +320,17 @@ pub async fn live_meta(pc: &PublicClient, cfg: &AllConfig, depth_for: &[String])
     };
     let filters = filters_from_ei(&ei);
     let (allow, _denied) = Allowlist::from_exchange_info(&ei);
-    let onboard: BTreeMap<String, i64> = ei["symbols"].as_array().into_iter().flatten().map(|s| (s["symbol"].as_str().unwrap_or("").to_string(), s["onboardDate"].as_i64().unwrap_or(0))).collect();
+    let onboard: BTreeMap<String, i64> = ei["symbols"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|s| {
+            (
+                s["symbol"].as_str().unwrap_or("").to_string(),
+                s["onboardDate"].as_i64().unwrap_or(0),
+            )
+        })
+        .collect();
     let now = now_ms();
     let mut metrics: BTreeMap<String, GateMetrics> = BTreeMap::new();
     if let Ok(t24) = pc.ticker_24h().await {
@@ -242,7 +349,10 @@ pub async fn live_meta(pc: &PublicClient, cfg: &AllConfig, depth_for: &[String])
                 step_size: f.map(|f| apex_core::num::to_f64(f.step_size)),
                 min_qty: f.map(|f| apex_core::num::to_f64(f.min_qty)),
                 min_notional: f.map(|f| apex_core::num::to_f64(f.min_notional)),
-                age_days: onboard.get(&s).filter(|x| **x > 0).map(|o| (now - o) as f64 / 86_400_000.0),
+                age_days: onboard
+                    .get(&s)
+                    .filter(|x| **x > 0)
+                    .map(|o| (now - o) as f64 / 86_400_000.0),
                 ..Default::default()
             };
             metrics.insert(s, m);
@@ -291,7 +401,13 @@ pub async fn live_meta(pc: &PublicClient, cfg: &AllConfig, depth_for: &[String])
     }
     for s in depth_for {
         if let (Some(m), Ok(d)) = (metrics.get(s).cloned(), pc.depth(s, 100).await) {
-            let lv = |k: &str| -> Vec<(f64, f64)> { d[k].as_array().into_iter().flatten().map(|r| (num(&r[0]), num(&r[1]))).collect() };
+            let lv = |k: &str| -> Vec<(f64, f64)> {
+                d[k].as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|r| (num(&r[0]), num(&r[1])))
+                    .collect()
+            };
             if let Some((usd, _, _)) = depth_within(&lv("bids"), &lv("asks"), 0.1) {
                 let mut m = m;
                 m.depth_usd = Some(usd);
@@ -299,20 +415,45 @@ pub async fn live_meta(pc: &PublicClient, cfg: &AllConfig, depth_for: &[String])
             }
         }
     }
-    let mut qv: Vec<(String, f64)> = metrics.iter().map(|(k, m)| (k.clone(), m.quote_volume_24h.unwrap_or(0.0))).collect();
+    let mut qv: Vec<(String, f64)> = metrics
+        .iter()
+        .map(|(k, m)| (k.clone(), m.quote_volume_24h.unwrap_or(0.0)))
+        .collect();
     qv.sort_by(|a, b| b.1.total_cmp(&a.1));
     let _ = cfg;
-    Ok(LiveMeta { filters, allow, metrics, qv_rank: qv.into_iter().map(|x| x.0).collect() })
+    Ok(LiveMeta {
+        filters,
+        allow,
+        metrics,
+        qv_rank: qv.into_iter().map(|x| x.0).collect(),
+    })
 }
 
 pub async fn screen(cfg: &AllConfig, top: usize) -> anyhow::Result<()> {
     let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
     let pre = live_meta(&pc, cfg, &[]).await?;
     let vg = &cfg.screener.volume_gate;
-    let cands: Vec<String> = pre.qv_rank.iter().filter(|s| *s != "BTCUSDT" && pre.metrics[*s].quote_volume_24h.unwrap_or(0.0) >= vg.min_quote_volume_24h).take(40).cloned().collect();
+    let cands: Vec<String> = pre
+        .qv_rank
+        .iter()
+        .filter(|s| {
+            *s != "BTCUSDT"
+                && pre.metrics[*s].quote_volume_24h.unwrap_or(0.0) >= vg.min_quote_volume_24h
+        })
+        .take(40)
+        .cloned()
+        .collect();
     let meta = live_meta(&pc, cfg, &cands).await?;
-    println!("Screener @ {} | allowlist crypto: {} simbol | kandidat volume: {}", fmt_utc(now_ms()), meta.allow.symbols.len(), cands.len());
-    println!("  {:<14} {:>10} {:>9} {:>6} {:>10} {:<10} {}", "symbol", "qv24 $M", "trades", "sprd", "depth $k", "state", "gagal volume gate");
+    println!(
+        "Screener @ {} | allowlist crypto: {} simbol | kandidat volume: {}",
+        fmt_utc(now_ms()),
+        meta.allow.symbols.len(),
+        cands.len()
+    );
+    println!(
+        "  {:<14} {:>10} {:>9} {:>6} {:>10} {:<10} {}",
+        "symbol", "qv24 $M", "trades", "sprd", "depth $k", "state", "gagal volume gate"
+    );
     let now = now_ms();
     let mut shown = 0;
     for s in &cands {
@@ -320,8 +461,14 @@ pub async fn screen(cfg: &AllConfig, top: usize) -> anyhow::Result<()> {
         let fails = m.failures(vg);
         let state = if fails.is_empty() && shown < top {
             shown += 1;
-            match (pc.recent_closed(s, Tf::H1, 450, now).await, pc.recent_closed(s, Tf::M15, 400, now).await) {
-                (Ok(h1), Ok(m15)) => screener_states(&h1, &m15, &cfg.screener.regime).last().map(|x| x.as_str()).unwrap_or("-"),
+            match (
+                pc.recent_closed(s, Tf::H1, 450, now).await,
+                pc.recent_closed(s, Tf::M15, 400, now).await,
+            ) {
+                (Ok(h1), Ok(m15)) => screener_states(&h1, &m15, &cfg.screener.regime)
+                    .last()
+                    .map(|x| x.as_str())
+                    .unwrap_or("-"),
                 _ => "ERR",
             }
         } else {
@@ -338,7 +485,9 @@ pub async fn screen(cfg: &AllConfig, top: usize) -> anyhow::Result<()> {
             fails.join(",")
         );
     }
-    println!("  (BTCUSDT = konteks saja; non-crypto/TradFi/pre-market ditolak allowlist default-deny)");
+    println!(
+        "  (BTCUSDT = konteks saja; non-crypto/TradFi/pre-market ditolak allowlist default-deny)"
+    );
     Ok(())
 }
 
@@ -366,7 +515,11 @@ pub async fn record(cfg: &AllConfig, data: &Path) -> anyhow::Result<()> {
         let _ = apex_data::ws::run_public_stream(&base, streams, tx).await;
     });
     let mut rec = Recorder::new(data);
-    println!("Recorder aktif ({} simbol) → {} | Ctrl+C untuk berhenti", syms.len(), data.display());
+    println!(
+        "Recorder aktif ({} simbol) → {} | Ctrl+C untuk berhenti",
+        syms.len(),
+        data.display()
+    );
     loop {
         tokio::select! {
             ev = rx.recv() => match ev {
@@ -444,7 +597,11 @@ pub async fn run(cfg: &mut AllConfig, o: RunOpts) -> anyhow::Result<()> {
     let sdir = cfg.engine.state_dir.join(sub);
     let store = StateStore::file(&sdir.join("oms_state.json"));
     let audit = apex_core::audit::AuditLog::to_file(&sdir.join("audit.jsonl"))?;
-    let entry_tf = if cfg.strategies.research_entry_5m { Tf::M5 } else { Tf::M15 };
+    let entry_tf = if cfg.strategies.research_entry_5m {
+        Tf::M5
+    } else {
+        Tf::M15
+    };
     println!(
         "apex run | mode={sub} | arm={} | entry_tf={} | universe={} | state={}",
         cfg.engine.arm,
@@ -452,32 +609,103 @@ pub async fn run(cfg: &mut AllConfig, o: RunOpts) -> anyhow::Result<()> {
         universe.len(),
         sdir.display()
     );
+    let notifier = apex_oms::HttpWebhookNotifier::from_env_or_noop();
     match mode {
         ExecMode::Paper => {
             let ex = MockExchange::new(cfg.risk.start_balance_usd);
-            let mgr = OrderManager::new(ex, mode, cfg.engine.clone(), cfg.risk.clone(), store, audit, meta.filters.clone())?;
-            run_loop(cfg, mgr, None, &pc, meta, o.once).await
+            let mgr = OrderManager::new(
+                ex,
+                mode,
+                cfg.engine.clone(),
+                cfg.risk.clone(),
+                store,
+                audit,
+                meta.filters.clone(),
+            )?
+            .with_notifier(notifier);
+            run_loop(cfg, mgr, None, None, &pc, meta, o.once).await
         }
         ExecMode::Testnet | ExecMode::Live => {
             let creds = Credentials::from_env()?;
-            let rest = Arc::new(apex_oms::binance::BinanceRest::new(mode, cfg.engine.rest_base(), creds, cfg.engine.recv_window_ms)?);
+            let rest = Arc::new(apex_oms::binance::BinanceRest::new(
+                mode,
+                cfg.engine.rest_base(),
+                creds,
+                cfg.engine.recv_window_ms,
+            )?);
             let off = rest.sync_time().await?;
             println!("  offset jam server: {off} ms");
             if off.abs() > cfg.engine.max_clock_offset_ms * 10 {
                 anyhow::bail!("offset jam {off} ms terlalu besar — sinkronkan jam Windows dulu");
             }
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            tokio::spawn(apex_oms::userstream::run_user_stream(rest.clone(), cfg.engine.ws_base().to_string(), tx));
-            let mgr = OrderManager::new(rest, mode, cfg.engine.clone(), cfg.risk.clone(), store, audit, meta.filters.clone())?;
-            run_loop(cfg, mgr, Some(rx), &pc, meta, o.once).await
+            let hb = Arc::new(std::sync::atomic::AtomicI64::new(now_ms()));
+            let handle = tokio::spawn(apex_oms::userstream::run_user_stream_with_heartbeat(
+                rest.clone(),
+                cfg.engine.ws_base().to_string(),
+                tx,
+                Some(hb.clone()),
+            ));
+            let user_sup = apex_oms::Supervised::new("user_stream", handle, hb);
+            let mgr = OrderManager::new(
+                rest,
+                mode,
+                cfg.engine.clone(),
+                cfg.risk.clone(),
+                store,
+                audit,
+                meta.filters.clone(),
+            )?
+            .with_notifier(notifier);
+            run_loop(cfg, mgr, Some(rx), Some(user_sup), &pc, meta, o.once).await
         }
     }
 }
 
-async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderManager<E>, mut rx: Option<tokio::sync::mpsc::UnboundedReceiver<UserEvent>>, pc: &PublicClient, mut meta: LiveMeta, once: bool) -> anyhow::Result<()> {
+fn spawn_public_heartbeat_task(ws_base: &str) -> apex_oms::Supervised {
+    let hb = Arc::new(std::sync::atomic::AtomicI64::new(now_ms()));
+    let hb_task = hb.clone();
+    let base = ws_base.to_string();
+    let handle = tokio::spawn(async move {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let reader = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let _ = apex_data::ws::run_public_stream_with_heartbeat(
+            &base,
+            vec!["btcusdt@kline_15m".to_string()],
+            tx,
+            Some(hb_task),
+        )
+        .await;
+        reader.abort();
+    });
+    apex_oms::Supervised::new("public_stream", handle, hb)
+}
+
+async fn recv_user_ev(
+    rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<UserEvent>>,
+) -> Option<UserEvent> {
+    match rx.as_mut() {
+        Some(r) => r.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn run_loop<E: FuturesExchange + Feed>(
+    cfg: &AllConfig,
+    mut mgr: OrderManager<E>,
+    mut rx: Option<tokio::sync::mpsc::UnboundedReceiver<UserEvent>>,
+    mut user_sup: Option<apex_oms::Supervised>,
+    pc: &PublicClient,
+    mut meta: LiveMeta,
+    once: bool,
+) -> anyhow::Result<()> {
     let now = now_ms();
     let paper = mgr.mode == ExecMode::Paper;
     let universe = cfg.universe();
+    let mut public_sup = apex_oms::RestartablePublicSupervisor::new();
+    if !paper && !once {
+        public_sup.attach(spawn_public_heartbeat_task(&cfg.engine.live_ws_base));
+    }
     if paper {
         let prices = mark_prices_for(pc, &universe).await.unwrap_or_default();
         for ev in mgr.ex.feed(&prices, now).await {
@@ -497,12 +725,17 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
     let mut last_meta = now;
     let mut last_reconcile = now;
     let mut siklus: u64 = 0;
-    let entry_tf = if cfg.strategies.research_entry_5m { Tf::M5 } else { Tf::M15 };
+    let entry_tf = if cfg.strategies.research_entry_5m {
+        Tf::M5
+    } else {
+        Tf::M15
+    };
     loop {
         let now = now_ms();
         // Di mode paper, hanya query mark_prices di sela bar close bila ada order aktif/pending di MockExchange
         if paper && (mgr.open_count() > 0 || mgr.pending_count() > 0) {
-            let active_syms: Vec<String> = mgr.book.trades.values().map(|t| t.symbol.clone()).collect();
+            let active_syms: Vec<String> =
+                mgr.book.trades.values().map(|t| t.symbol.clone()).collect();
             let _ = rate_guard.try_acquire(
                 "GET /fapi/v1/premiumIndex",
                 active_syms.len().max(1) as u32,
@@ -545,15 +778,8 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
                 &close_reason,
                 cfg.risk.risk_usd,
             );
-            let mistake = apex_oms::classify_trade_mistake(
-                pnl,
-                hold_ms,
-                0.0003,
-                0.0,
-                true,
-                50.0,
-                sl_pct,
-            );
+            let mistake =
+                apex_oms::classify_trade_mistake(pnl, hold_ms, 0.0003, 0.0, true, 50.0, sl_pct);
             playbook.record_mistake(mistake);
             let r_mult = if cfg.risk.risk_usd > 0.0 {
                 pnl / cfg.risk.risk_usd
@@ -585,12 +811,35 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
                 }),
             );
         }
-        if !paper && now - last_reconcile > 300_000 {
+        if !paper
+            && now - last_reconcile
+                > if user_sup.as_ref().is_some_and(|s| s.handle.is_finished()) {
+                    15_000
+                } else {
+                    300_000
+                }
+        {
             if let Err(e) = mgr.reconcile(now).await {
                 eprintln!("reconcile gagal: {e}");
             }
             last_reconcile = now;
         }
+        let user_dead_block = user_sup.as_mut().is_some_and(|sup| {
+            sup.check_user_stream(
+                now,
+                mgr.open_count() > 0,
+                !paper,
+                apex_oms::supervision::DEFAULT_USER_STREAM_SILENCE_MS,
+                &mgr.audit,
+                mgr.notifier.as_ref(),
+            )
+        });
+        let ws_base_restart = cfg.engine.live_ws_base.clone();
+        let pub_dead_block =
+            public_sup.poll_or_restart(now, &mgr.audit, mgr.notifier.as_ref(), || {
+                spawn_public_heartbeat_task(&ws_base_restart)
+            });
+        let stream_entry_blocked = user_dead_block || pub_dead_block;
         if now - last_meta > 1_800_000 {
             let _ = rate_guard.try_acquire(
                 "GET /fapi/v1/ticker/24hr",
@@ -607,23 +856,54 @@ async fn run_loop<E: FuturesExchange + Feed>(cfg: &AllConfig, mut mgr: OrderMana
         if cur_close > last_close && now - cur_close >= 2_500 {
             last_close = cur_close;
             siklus += 1;
-            if let Err(e) = on_bar_close(cfg, &mut mgr, pc, &mut meta, &mut vg, &ids, &mut watches, &mut yahudi_cooldown, &mut playbook, &mut trend_flip_guard, &mut rate_guard, now, siklus).await {
+            if let Err(e) = on_bar_close(
+                cfg,
+                &mut mgr,
+                pc,
+                &mut meta,
+                &mut vg,
+                &ids,
+                &mut watches,
+                &mut yahudi_cooldown,
+                &mut playbook,
+                &mut trend_flip_guard,
+                &mut rate_guard,
+                stream_entry_blocked,
+                now,
+                siklus,
+            )
+            .await
+            {
                 eprintln!("{} siklus {} gagal: {e}", fmt_utc(now), entry_tf.binance());
             }
             if once {
+                mgr.shutdown(now_ms());
                 break;
             }
         }
         tokio::select! {
+            Some(ev) = recv_user_ev(&mut rx) => {
+                // Event-driven: fill dari user-stream langsung diproses (termasuk protect() SL GR-8)
+                // tanpa menunggu siklus poll 15 detik.
+                mgr.on_event(ev, now_ms()).await;
+                continue;
+            }
             _ = tokio::time::sleep(std::time::Duration::from_secs(cfg.engine.poll_interval_secs.max(1))) => {}
-            _ = tokio::signal::ctrl_c() => { println!("Ctrl+C — state disimpan, keluar."); break; }
+            _ = tokio::signal::ctrl_c() => {
+                println!("Ctrl+C — state disimpan, keluar.");
+                mgr.shutdown(now_ms());
+                break;
+            }
         }
     }
     Ok(())
 }
 
 /// Ambil mark price hanya untuk simbol yang diperlukan (weight 1 per simbol bila <= 6 simbol).
-async fn mark_prices_for(pc: &PublicClient, syms: &[String]) -> anyhow::Result<BTreeMap<String, f64>> {
+async fn mark_prices_for(
+    pc: &PublicClient,
+    syms: &[String],
+) -> anyhow::Result<BTreeMap<String, f64>> {
     let mut out = BTreeMap::new();
     if syms.is_empty() {
         return Ok(out);
@@ -642,14 +922,25 @@ async fn mark_prices_for(pc: &PublicClient, syms: &[String]) -> anyhow::Result<B
         }
     }
     let v = pc.premium_index().await?;
-    Ok(v.as_array().into_iter().flatten().map(|p| (p["symbol"].as_str().unwrap_or("").to_string(), num(&p["markPrice"]))).collect())
+    Ok(v.as_array()
+        .into_iter()
+        .flatten()
+        .map(|p| {
+            (
+                p["symbol"].as_str().unwrap_or("").to_string(),
+                num(&p["markPrice"]),
+            )
+        })
+        .collect())
 }
 
 /// Ambil konteks mikrostruktur & Vike dari dashboard lokal (127.0.0.1:8787) bila aktif (0 weight eksternal).
 async fn fetch_local_micro_context(sym: &str) -> Option<Value> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let fut = async {
-        let mut stream = tokio::net::TcpStream::connect("127.0.0.1:8787").await.ok()?;
+        let mut stream = tokio::net::TcpStream::connect("127.0.0.1:8787")
+            .await
+            .ok()?;
         let req = format!(
             "GET /api/micro/snapshot?symbol={sym}&tab=largevp&window=15m HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nConnection: close\r\n\r\n"
         );
@@ -667,7 +958,10 @@ async fn fetch_local_micro_context(sym: &str) -> Option<Value> {
             "large_trades_count": v.get("large").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
         }))
     };
-    tokio::time::timeout(Duration::from_millis(350), fut).await.ok().flatten()
+    tokio::time::timeout(Duration::from_millis(350), fut)
+        .await
+        .ok()
+        .flatten()
 }
 
 fn build_s1_trace_json(
@@ -687,7 +981,12 @@ fn build_s1_trace_json(
     s1_cand_entry: Option<f64>,
     s1_cand_sl: Option<f64>,
     s1_sized: Option<(f64, f64)>,
-    ofcc_trace: Option<(apex_strategies::ofcc_watch::Outcome, u32, u32, apex_core::types::Side)>,
+    ofcc_trace: Option<(
+        apex_strategies::ofcc_watch::Outcome,
+        u32,
+        u32,
+        apex_core::types::Side,
+    )>,
     s1_stop: Option<&str>,
 ) -> (Value, String) {
     let trace_side = s1_cand_side
@@ -742,7 +1041,10 @@ fn build_s1_trace_json(
         if entry_d > rust_decimal::Decimal::ZERO && loss_unit > rust_decimal::Decimal::ZERO {
             let q = f.floor_qty(to_dec(cfg.risk.risk_usd) / loss_unit);
             let n = q * entry_d;
-            (Some(apex_core::num::to_f64(q)), Some(apex_core::num::to_f64(n)))
+            (
+                Some(apex_core::num::to_f64(q)),
+                Some(apex_core::num::to_f64(n)),
+            )
         } else {
             (None, None)
         }
@@ -842,11 +1144,16 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
     playbook: &mut apex_oms::PlaybookEngine,
     trend_flip_guard: &mut apex_oms::TrendFlipConfirmationGuard,
     rate_guard: &mut apex_oms::BinanceRateGuard,
+    stream_entry_blocked: bool,
     now: Ms,
     siklus: u64,
 ) -> anyhow::Result<()> {
     let universe = cfg.universe();
-    let entry_tf = if cfg.strategies.research_entry_5m { Tf::M5 } else { Tf::M15 };
+    let entry_tf = if cfg.strategies.research_entry_5m {
+        Tf::M5
+    } else {
+        Tf::M15
+    };
     let want_5m = entry_tf == Tf::M5 || ids.iter().any(|x| x.is_yahudi_scalp());
     let _ = rate_guard.try_acquire(
         "GET /fapi/v1/klines (bar_close)",
@@ -855,7 +1162,9 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         now,
     );
     let snap = snapshot_with_cfg(pc, &cfg.engine.data_dir, &universe, want_5m, now).await?;
-    let Some(dec) = decide_with_chop(&snap, cfg.screener.chop) else { anyhow::bail!("regime: data kurang") };
+    let Some(dec) = decide_with_chop(&snap, cfg.screener.chop) else {
+        anyhow::bail!("regime: data kurang")
+    };
     match reversal_shadow(&snap) {
         Some((ts, up, down)) => mgr.audit.log(now, "MR09_SHADOW", serde_json::json!({"as_of": ts, "rev_up": up, "rev_down": down, "context": reversal_details(&snap)})),
         None => mgr.audit.log(now, "MR09_SHADOW_UNAVAILABLE", serde_json::json!({"reason": "insufficient_or_unaligned_data", "context": reversal_details(&snap)})),
@@ -883,7 +1192,12 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
     if mgr.mode == ExecMode::Paper {
         let mut latest_px = BTreeMap::new();
         for (sym, m15, _) in &snap.syms {
-            let px = snap.syms_m5.get(sym).and_then(|v| v.last()).or_else(|| m15.last()).map(|b| b.close);
+            let px = snap
+                .syms_m5
+                .get(sym)
+                .and_then(|v| v.last())
+                .or_else(|| m15.last())
+                .map(|b| b.close);
             if let Some(p) = px {
                 latest_px.insert(sym.clone(), p);
             }
@@ -892,8 +1206,18 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
             mgr.on_event(ev, now).await;
         }
     }
-    let majors: Vec<String> = meta.qv_rank.iter().filter(|s| *s != "BTCUSDT").take(10).cloned().collect();
-    let equity = mgr.ex.wallet_balance().await.unwrap_or(cfg.risk.start_balance_usd);
+    let majors: Vec<String> = meta
+        .qv_rank
+        .iter()
+        .filter(|s| *s != "BTCUSDT")
+        .take(10)
+        .cloned()
+        .collect();
+    let equity = mgr
+        .ex
+        .wallet_balance()
+        .await
+        .unwrap_or(cfg.risk.start_balance_usd);
     println!("{} regime={} macro={} alt_ok={} long_ok={} short_ok={} max_pos={} equity=${:.2} open={} pending={}", fmt_utc(now), dec.state.as_str(), macro_gate.macro_bias, macro_gate.altcoins_allowed, dec.long_ok, dec.short_ok, dec.max_positions, equity, mgr.open_count(), mgr.pending_count());
     watches.retain(|sym, _| snap.syms.iter().any(|(s, _, _)| s == sym));
     for (sym, m15, h1) in &snap.syms {
@@ -916,13 +1240,21 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         } else {
             m15.as_slice()
         };
-        let actual_tf = if entry_tf == Tf::M5 && !m5_slice.is_empty() { Tf::M5 } else { Tf::M15 };
+        let actual_tf = if entry_tf == Tf::M5 && !m5_slice.is_empty() {
+            Tf::M5
+        } else {
+            Tf::M15
+        };
         if entry_bars.is_empty() {
             continue;
         }
         if let Some(created) = mgr.trade_on(sym).map(|t| t.created_ms) {
-            for bar in entry_bars.iter().filter(|bar| bar.open_time + actual_tf.ms() > created) {
-                mgr.on_closed_price(sym, to_dec(bar.close), bar.open_time + actual_tf.ms()).await?;
+            for bar in entry_bars
+                .iter()
+                .filter(|bar| bar.open_time + actual_tf.ms() > created)
+            {
+                mgr.on_closed_price(sym, to_dec(bar.close), bar.open_time + actual_tf.ms())
+                    .await?;
             }
         }
         // Exit on Trend/CVD Flip (TREND_FLIP) dengan TrendFlipConfirmationGuard 2-reading (>=60s)
@@ -976,7 +1308,9 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 }
             }
         }
-        let Some(f) = meta.filters.get(sym).cloned() else { continue };
+        let Some(f) = meta.filters.get(sym).cloned() else {
+            continue;
+        };
         if !meta.allow.contains(sym) {
             continue;
         }
@@ -986,8 +1320,14 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         let series = SymbolSeries::new_with_tf(sym, entry_bars, h1, actual_tf);
         let t = entry_bars.len() - 1;
         let states = screener_states(h1, m15, &cfg.screener.regime);
-        let state = series.h1_idx_at(t).and_then(|h| states.get(h).copied()).unwrap_or(SymState::Blocked);
-        let mut candidates: Vec<_> = evaluate(&series, t, state, ids, &cfg.strategies.params).into_iter().map(|s| (s, false)).collect();
+        let state = series
+            .h1_idx_at(t)
+            .and_then(|h| states.get(h).copied())
+            .unwrap_or(SymState::Blocked);
+        let mut candidates: Vec<_> = evaluate(&series, t, state, ids, &cfg.strategies.params)
+            .into_iter()
+            .map(|s| (s, false))
+            .collect();
         // Pastikan evaluasi S-01 Sweep Reclaim & S-02 Liquidity Sniper juga dijalankan pada timeframe 15m penuh
         if actual_tf != Tf::M15 && !m15.is_empty() {
             let t15 = m15.len() - 1;
@@ -1051,7 +1391,10 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 if m5_slice.is_empty() { m15 } else { m5_slice },
                 Some(&snap.btc_m15),
                 qv24,
-                cfg.screener.volume_gate.min_quote_volume_24h.min(10_000_000.0),
+                cfg.screener
+                    .volume_gate
+                    .min_quote_volume_24h
+                    .min(10_000_000.0),
                 &[],
                 s01_match,
                 s02_match,
@@ -1079,8 +1422,16 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 true,
             );
             let walls_summary = apex_screener::WallLifelinesSummary {
-                active_bid_walls: if delta_snap.w15m.buy_ratio >= 0.52 { 2 } else { 1 },
-                active_ask_walls: if delta_snap.w15m.buy_ratio < 0.48 { 2 } else { 1 },
+                active_bid_walls: if delta_snap.w15m.buy_ratio >= 0.52 {
+                    2
+                } else {
+                    1
+                },
+                active_ask_walls: if delta_snap.w15m.buy_ratio < 0.48 {
+                    2
+                } else {
+                    1
+                },
                 pulled_count: 0,
                 eaten_count: if tr.s01_sweep_pool.is_some() { 1 } else { 0 },
                 spoof_score: 0.0,
@@ -1140,22 +1491,39 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         } else {
             None
         };
-        let mut ofcc_trace: Option<(apex_strategies::ofcc_watch::Outcome, u32, u32, apex_core::types::Side)> = None;
+        let mut ofcc_trace: Option<(
+            apex_strategies::ofcc_watch::Outcome,
+            u32,
+            u32,
+            apex_core::types::Side,
+        )> = None;
         if let Some(w) = watches.get_mut(sym) {
             use apex_strategies::ofcc_watch::Outcome;
-            let feature = if w.signal.side == apex_core::types::Side::Long { &series.long.f15 } else { &series.short.f15 };
-            let outcome = w.observe(&entry_bars[t], entry_bars[t].open_time + actual_tf.ms(), feature.p90_absdelta[t]);
+            let feature = if w.signal.side == apex_core::types::Side::Long {
+                &series.long.f15
+            } else {
+                &series.short.f15
+            };
+            let outcome = w.observe(
+                &entry_bars[t],
+                entry_bars[t].open_time + actual_tf.ms(),
+                feature.p90_absdelta[t],
+            );
             ofcc_trace = Some((outcome, w.seen(), w.remaining_bars(), w.signal.side));
             match outcome {
-                Outcome::Waiting => {},
+                Outcome::Waiting => {}
                 Outcome::Confirmed => {
                     let mut signal = w.signal.clone();
                     signal.ttl_bars = w.remaining_bars();
                     signal.bar_close_ms = entry_bars[t].open_time + actual_tf.ms();
                     watches.remove(sym);
-                    if signal.ttl_bars > 0 { candidates.insert(0, (signal, true)); }
+                    if signal.ttl_bars > 0 {
+                        candidates.insert(0, (signal, true));
+                    }
                 }
-                Outcome::Rejected | Outcome::Expired => { watches.remove(sym); }
+                Outcome::Rejected | Outcome::Expired => {
+                    watches.remove(sym);
+                }
             }
         }
         let mut s1_cand_side = None;
@@ -1170,14 +1538,27 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 s1_cand_entry = Some(sig.entry);
                 s1_cand_sl = Some(sig.sl);
             }
-            let skip = |r: &str| mgr.audit.log(now, "SKIP", serde_json::json!({"symbol": sym, "strategy": sig.strategy.code(), "reason": r}));
+            let skip = |r: &str| {
+                mgr.audit.log(now, "SKIP", serde_json::json!({"symbol": sym, "strategy": sig.strategy.code(), "reason": r}))
+            };
+            if stream_entry_blocked {
+                if is_s1 {
+                    s1_stop = Some("STREAM_SUPERVISOR_BLOCKED");
+                }
+                skip("STREAM_SUPERVISOR_BLOCKED");
+                continue;
+            }
             if !included {
-                if is_s1 { s1_stop = Some(SkipReason::VolumeGate.code()); }
+                if is_s1 {
+                    s1_stop = Some(SkipReason::VolumeGate.code());
+                }
                 skip(SkipReason::VolumeGate.code());
                 continue;
             }
             if mgr.mode != ExecMode::Paper && !cfg.is_go(sig.strategy) {
-                if is_s1 { s1_stop = Some(SkipReason::StrategyNotGo.code()); }
+                if is_s1 {
+                    s1_stop = Some(SkipReason::StrategyNotGo.code());
+                }
                 skip(SkipReason::StrategyNotGo.code());
                 continue;
             }
@@ -1194,7 +1575,10 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 if cfg.strategies.params.scalp_momentum_5m_gate && !m5_slice.is_empty() {
                     let mom = apex_indicators::confirm_entry_momentum_5m(m5_slice, sig.side, 0.20);
                     if !mom.allowed {
-                        skip(&format!("YAHUDI_5M_MOMENTUM:{}", mom.reason.unwrap_or("FAIL")));
+                        skip(&format!(
+                            "YAHUDI_5M_MOMENTUM:{}",
+                            mom.reason.unwrap_or("FAIL")
+                        ));
                         continue;
                     }
                 }
@@ -1204,7 +1588,9 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         Side::Short => tr.cvd_aligned_short,
                     };
                     let sp_pct = gm.spread_bps.unwrap_or(2.0) / 10_000.0;
-                    if let Err(pb_veto) = playbook.evaluate_veto(tr.chop_14, tr.adx_14, sp_pct, cvd_ok) {
+                    if let Err(pb_veto) =
+                        playbook.evaluate_veto(tr.chop_14, tr.adx_14, sp_pct, cvd_ok)
+                    {
                         skip(&pb_veto);
                         continue;
                     }
@@ -1214,17 +1600,15 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                     } else {
                         0.008
                     };
-                    let sl_menu = apex_oms::build_sl_tp_menu_scalp(sig.entry, sig.sl, sig.side, atr_pct);
+                    let sl_menu =
+                        apex_oms::build_sl_tp_menu_scalp(sig.entry, sig.sl, sig.side, atr_pct);
                     let sl_pct = if sig.entry > 0.0 {
                         (sig.entry - sig.sl).abs() / sig.entry
                     } else {
                         0.025
                     };
                     let sl_atr_ratio = if atr_pct > 0.0 { sl_pct / atr_pct } else { 1.0 };
-                    let comp_score = scan_rows
-                        .last()
-                        .map(|r| r.score)
-                        .unwrap_or(72);
+                    let comp_score = scan_rows.last().map(|r| r.score).unwrap_or(72);
                     let knn_prob_opt = scan_rows.last().and_then(|r| r.knn_prob);
                     let council = apex_oms::convene_deterministic_council(
                         sym,
@@ -1254,7 +1638,8 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         "council": council,
                         "battle_arena": battle,
                     });
-                    mgr.audit.log(now, "ARTATRADE_COUNCIL", council_json.clone());
+                    mgr.audit
+                        .log(now, "ARTATRADE_COUNCIL", council_json.clone());
                     council_decisions.push(council_json);
                     if council.final_action != "EXECUTE" {
                         skip("ARTATRADE_COUNCIL_REJECT");
@@ -1301,23 +1686,53 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 spread_bps: gm.spread_bps,
             };
             let features = if sig.strategy == apex_strategies::StrategyId::S5Rmp {
-                let ss = if sig.side == apex_core::types::Side::Long { &series.long } else { &series.short };
+                let ss = if sig.side == apex_core::types::Side::Long {
+                    &series.long
+                } else {
+                    &series.short
+                };
                 apex_strategies::knn::features_at(ss, t)
-            } else { None };
-            if sig.strategy == apex_strategies::StrategyId::S5Rmp && cfg.strategies.params.s5_knn_enabled {
-                let samples: Vec<_> = mgr.book.closed.iter().filter_map(|trade| {
-                    if trade.strategy != apex_strategies::StrategyId::S5Rmp.code() { return None; }
-                    let pnl = trade.pnl_net?;
-                    if !pnl.is_finite() { return None; }
-                    Some(apex_strategies::knn::LabeledSample {
-                        features: trade.knn_features?, signal_ms: trade.knn_signal_ms?,
-                        closed_ms: trade.closed_ms?, win: pnl > 0.0,
+            } else {
+                None
+            };
+            if sig.strategy == apex_strategies::StrategyId::S5Rmp
+                && cfg.strategies.params.s5_knn_enabled
+            {
+                let samples: Vec<_> = mgr
+                    .book
+                    .closed
+                    .iter()
+                    .filter_map(|trade| {
+                        if trade.strategy != apex_strategies::StrategyId::S5Rmp.code() {
+                            return None;
+                        }
+                        let pnl = trade.pnl_net?;
+                        if !pnl.is_finite() {
+                            return None;
+                        }
+                        Some(apex_strategies::knn::LabeledSample {
+                            features: trade.knn_features?,
+                            signal_ms: trade.knn_signal_ms?,
+                            closed_ms: trade.closed_ms?,
+                            win: pnl > 0.0,
+                        })
                     })
-                }).collect();
-                let grade = features.and_then(|f| apex_strategies::knn::grade(&samples, f, sig.bar_close_ms));
-                if !grade.is_some_and(|g| g.pass) { skip("S5_KNN_REJECTED_OR_UNAVAILABLE"); continue; }
+                    .collect();
+                let grade = features
+                    .and_then(|f| apex_strategies::knn::grade(&samples, f, sig.bar_close_ms));
+                if !grade.is_some_and(|g| g.pass) {
+                    skip("S5_KNN_REJECTED_OR_UNAVAILABLE");
+                    continue;
+                }
             }
-            let inp = SizingInput { side: sig.side, entry: to_dec(sig.entry), sl: to_dec(sig.sl), kind: sig.kind, filters: &f, risk: &cfg.risk };
+            let inp = SizingInput {
+                side: sig.side,
+                entry: to_dec(sig.entry),
+                sl: to_dec(sig.sl),
+                kind: sig.kind,
+                filters: &f,
+                risk: &cfg.risk,
+            };
             match mgr.book.risk.evaluate_entry(&ctx, &inp, &cfg.risk) {
                 Ok(mut sz) => {
                     if is_s1 && cfg.strategies.params.s1_rr > 0.0 {
@@ -1326,21 +1741,38 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                             Side::Short => -rust_decimal::Decimal::ONE,
                         };
                         let dist = (sz.entry - sz.sl).abs();
-                        sz.tp = f.round_tp(sig.side, sz.entry + sgn * to_dec(cfg.strategies.params.s1_rr) * dist);
+                        sz.tp = f.round_tp(
+                            sig.side,
+                            sz.entry + sgn * to_dec(cfg.strategies.params.s1_rr) * dist,
+                        );
                     } else if is_yahudi && cfg.strategies.params.scalp_rr > 0.0 {
                         let sgn = match sig.side {
                             Side::Long => rust_decimal::Decimal::ONE,
                             Side::Short => -rust_decimal::Decimal::ONE,
                         };
                         let dist = (sz.entry - sz.sl).abs();
-                        sz.tp = f.round_tp(sig.side, sz.entry + sgn * to_dec(cfg.strategies.params.scalp_rr) * dist);
+                        sz.tp = f.round_tp(
+                            sig.side,
+                            sz.entry + sgn * to_dec(cfg.strategies.params.scalp_rr) * dist,
+                        );
                     }
                     if is_s1 {
                         s1_sized = Some((to_f64(sz.qty), to_f64(sz.notional)));
                     }
-                    if sig.strategy == apex_strategies::StrategyId::S1Tfp && !cfg.strategies.params.s1_direct_limit && !ofcc_confirmed {
-                        if let Some(w) = apex_strategies::ofcc_watch::S1Watch::new_with_tf(sig.clone(), actual_tf) {
-                            ofcc_trace = Some((apex_strategies::ofcc_watch::Outcome::Waiting, w.seen(), w.remaining_bars(), sig.side));
+                    if sig.strategy == apex_strategies::StrategyId::S1Tfp
+                        && !cfg.strategies.params.s1_direct_limit
+                        && !ofcc_confirmed
+                    {
+                        if let Some(w) = apex_strategies::ofcc_watch::S1Watch::new_with_tf(
+                            sig.clone(),
+                            actual_tf,
+                        ) {
+                            ofcc_trace = Some((
+                                apex_strategies::ofcc_watch::Outcome::Waiting,
+                                w.seen(),
+                                w.remaining_bars(),
+                                sig.side,
+                            ));
                             s1_stop = Some("ofcc_waiting");
                             watches.insert(sym.clone(), w);
                         } else {
@@ -1350,9 +1782,15 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         continue;
                     }
                     if ofcc_confirmed {
-                        let crossed = if sig.side == apex_core::types::Side::Long { to_dec(entry_bars[t].close) <= sz.entry } else { to_dec(entry_bars[t].close) >= sz.entry };
+                        let crossed = if sig.side == apex_core::types::Side::Long {
+                            to_dec(entry_bars[t].close) <= sz.entry
+                        } else {
+                            to_dec(entry_bars[t].close) >= sz.entry
+                        };
                         if crossed {
-                            if is_s1 { s1_stop = Some("OFCC_POST_ONLY_CROSS"); }
+                            if is_s1 {
+                                s1_stop = Some("OFCC_POST_ONLY_CROSS");
+                            }
                             skip("OFCC_POST_ONLY_CROSS");
                             continue;
                         }
@@ -1361,7 +1799,9 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                     if ofcc_confirmed {
                         ttl_ms = ttl_ms.saturating_sub((now - sig.bar_close_ms).max(0));
                         if ttl_ms <= 0 {
-                            if is_s1 { s1_stop = Some("OFCC_EXPIRED"); }
+                            if is_s1 {
+                                s1_stop = Some("OFCC_EXPIRED");
+                            }
                             skip("OFCC_EXPIRED");
                             continue;
                         }
@@ -1369,16 +1809,38 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                     if is_s1 {
                         s1_stop = Some("signal");
                     }
-                    let it = EntryIntent { symbol: sym.clone(), strategy: sig.strategy.code().to_string(), sizing: sz, kind: sig.kind, ttl_ms, cancel_beyond: sig.cancel_beyond.map(to_dec), knn_features: features, knn_signal_ms: features.map(|_| sig.bar_close_ms) };
+                    let it = EntryIntent {
+                        symbol: sym.clone(),
+                        strategy: sig.strategy.code().to_string(),
+                        sizing: sz,
+                        kind: sig.kind,
+                        ttl_ms,
+                        cancel_beyond: sig.cancel_beyond.map(to_dec),
+                        knn_features: features,
+                        knn_signal_ms: features.map(|_| sig.bar_close_ms),
+                    };
                     match mgr.submit(it, now).await {
-                        Ok(cid) => println!("  ENTRY {} {} {:?} cid={cid}", sig.strategy.code(), sym, sig.side),
+                        Ok(cid) => println!(
+                            "  ENTRY {} {} {:?} cid={cid}",
+                            sig.strategy.code(),
+                            sym,
+                            sig.side
+                        ),
                         Err(e) => println!("  entry {} {} ditolak: {e}", sig.strategy.code(), sym),
                     }
                 }
                 Err(r) => {
-                    if is_s1 { s1_stop = Some(r.code()); }
+                    if is_s1 {
+                        s1_stop = Some(r.code());
+                    }
                     skip(r.code());
-                    println!("  sinyal {} {} {:?} → SKIP {}", sig.strategy.code(), sym, sig.side, r.code());
+                    println!(
+                        "  sinyal {} {} {:?} → SKIP {}",
+                        sig.strategy.code(),
+                        sym,
+                        sig.side,
+                        r.code()
+                    );
                 }
             }
         }
@@ -1451,7 +1913,8 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
         .iter()
         .map(|(k, m)| (k.clone(), m.quote_volume_24h.unwrap_or(0.0)))
         .collect();
-    let universe_audit = apex_screener::audit_universe_symbols(&universe_tickers, &[], 10_000_000.0);
+    let universe_audit =
+        apex_screener::audit_universe_symbols(&universe_tickers, &[], 10_000_000.0);
     let local_open: Vec<(String, f64)> = mgr
         .book
         .trades
@@ -1510,22 +1973,37 @@ mod reversal_shadow_tests {
         assert_eq!(fetch_intervals(true), &[Tf::M5]);
     }
     fn make_bars(n: usize, start: i64, width: i64, base: f64) -> Vec<Bar> {
-        (0..n).map(|i| {
-            let p = base * (1.0 + 0.0001 * i as f64 + 0.03 * (i as f64 / 9.0).sin());
-            Bar { open_time:start + i as i64 * width, open:p, high:p*1.01, low:p*0.99, close:p,
-                volume:100.0, quote_volume:100.0*p, trades:10, taker_buy_base:50.0 }
-        }).collect()
+        (0..n)
+            .map(|i| {
+                let p = base * (1.0 + 0.0001 * i as f64 + 0.03 * (i as f64 / 9.0).sin());
+                Bar {
+                    open_time: start + i as i64 * width,
+                    open: p,
+                    high: p * 1.01,
+                    low: p * 0.99,
+                    close: p,
+                    volume: 100.0,
+                    quote_volume: 100.0 * p,
+                    trades: 10,
+                    taker_buy_base: 50.0,
+                }
+            })
+            .collect()
     }
     #[test]
     fn shadow_context_is_available_without_touching_execution() {
-        let h = Tf::H1.ms(); let d = Tf::D1.ms(); let end = 1000*h;
+        let h = Tf::H1.ms();
+        let d = Tf::D1.ms();
+        let end = 1000 * h;
         let daily_end = end - end.rem_euclid(d);
         let s = Snapshot {
-            btc_m15:vec![], btc_h1:make_bars(1000,0,h,100.0), dom_h1:None,
-            btc_daily:Some(make_bars(250,daily_end-250*d,d,100.0)),
-            eth_daily:Some(make_bars(250,daily_end-250*d,d,10.0)),
-            syms:vec![("ETHUSDT".into(),vec![],make_bars(1000,0,h,10.0))],
-            syms_m5:BTreeMap::new(),
+            btc_m15: vec![],
+            btc_h1: make_bars(1000, 0, h, 100.0),
+            dom_h1: None,
+            btc_daily: Some(make_bars(250, daily_end - 250 * d, d, 100.0)),
+            eth_daily: Some(make_bars(250, daily_end - 250 * d, d, 10.0)),
+            syms: vec![("ETHUSDT".into(), vec![], make_bars(1000, 0, h, 10.0))],
+            syms_m5: BTreeMap::new(),
         };
         assert!(reversal_shadow(&s).is_some());
         let details = reversal_details(&s).unwrap();

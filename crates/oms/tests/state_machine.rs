@@ -745,3 +745,252 @@ async fn tiga_kegagalan_berturut_memicu_kill() {
     assert_eq!(m.kill.reason().as_deref(), Some("STATE_SAVE_FAILED"));
     assert_eq!(m.audit.count("KILL_ENGAGED"), 1);
 }
+
+// ---------------------------------------------------------------- WP-3 ketahanan OMS (F7-F10)
+
+#[tokio::test]
+async fn unknown_submit_disimpan_dan_diselesaikan_lewat_tick_unknown() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    // 1 panggilan place_order -> Unknown; 2 query_order pertama (1 di submit, 1 di tick_unknown +1s) -> None
+    ex.knobs(|k| {
+        k.unknown_place = 1;
+        k.unknown_invisible_polls = 2;
+    });
+    let mut m = mgr("unknown-submit-resolve", ex, OrphanPolicy::PlaceSl);
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+
+    // Segera setelah submit: state adalah UnknownSubmit, memblokir simbol & dihitung ke pending_count
+    assert_eq!(m.book.trades[&cid].state, TradeState::UnknownSubmit);
+    assert!(m.symbol_busy("ETHUSDT"));
+    assert_eq!(m.pending_count(), 1);
+    assert_eq!(m.audit.count("ENTRY_UNKNOWN_QUEUED"), 1);
+
+    // Sebelum jadwal backoff pertama (1000 ms) tidak ada query tambahan
+    let q_before =
+        m.ex.calls()
+            .iter()
+            .filter(|c| c.starts_with("query_order"))
+            .count();
+    m.tick_unknown(T0 + 500).await;
+    let q_mid =
+        m.ex.calls()
+            .iter()
+            .filter(|c| c.starts_with("query_order"))
+            .count();
+    assert_eq!(q_before, q_mid);
+
+    // Percobaan #1 di +1000 ms masih invisible -> tetap UnknownSubmit
+    m.tick_unknown(T0 + 1_000).await;
+    assert_eq!(m.book.trades[&cid].state, TradeState::UnknownSubmit);
+    assert_eq!(m.book.trades[&cid].unknown_attempts, 1);
+
+    // Percobaan #2 di +3000 ms (1s + 2s) menemukan order terisi -> transisi ke Open + SL dipasang
+    m.tick_unknown(T0 + 3_000).await;
+    assert_eq!(m.book.trades[&cid].state, TradeState::Open);
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+    assert_eq!(m.audit.count("UNKNOWN_RESOLVED_BY_QUERY"), 1);
+}
+
+#[tokio::test]
+async fn unknown_submit_dihapus_hanya_setelah_jadwal_habis_tanpa_jejak() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    ex.knobs(|k| {
+        k.unknown_place = 1;
+        k.unknown_drop_before_book = true;
+    });
+    let mut m = mgr("unknown-submit-drop", ex, OrphanPolicy::PlaceSl);
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(m.book.trades[&cid].state, TradeState::UnknownSubmit);
+
+    // Selama jadwal backoff [1s, 3s, 7s, 15s] trade TIDAK boleh dihapus dini
+    for dt in [1_000_i64, 3_000, 7_000, 15_000] {
+        m.tick_unknown(T0 + dt).await;
+        assert!(
+            m.book.trades.contains_key(&cid),
+            "trade tidak boleh dihapus sebelum jadwal habis (dt={dt})"
+        );
+    }
+
+    // Pada akhir jadwal (+30_000 ms), open_orders & positions kosong -> dihapus dengan ENTRY_NOT_FOUND_FINAL
+    m.tick_unknown(T0 + 30_000).await;
+    assert!(!m.book.trades.contains_key(&cid));
+    assert!(!m.symbol_busy("ETHUSDT"));
+    assert_eq!(m.audit.count("ENTRY_NOT_FOUND_FINAL"), 1);
+}
+
+#[tokio::test]
+async fn unknown_submit_mengadopsi_posisi_yatim_pada_pengecekan_akhir_dan_reconcile() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    ex.knobs(|k| {
+        k.unknown_place = 1;
+        k.unknown_drop_before_book = true;
+    });
+    let mut m = mgr("unknown-submit-adopt", ex, OrphanPolicy::PlaceSl);
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+
+    // Simulasikan posisi sudah muncul di bursa walau query_order by clientOrderId tidak menemukannya
+    m.ex.inject_position("ETHUSDT", dec!(0.02), dec!(2500));
+    for dt in [1_000_i64, 3_000, 7_000, 15_000, 30_000] {
+        m.tick_unknown(T0 + dt).await;
+    }
+    assert_eq!(m.book.trades[&cid].state, TradeState::Open);
+    assert!(m.book.trades[&cid].adopted);
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+    assert_eq!(m.audit.count("UNKNOWN_ADOPTED_POSITION"), 1);
+
+    // Reconcile saat boot juga memperlakukan UnknownSubmit yang sudah terisi di bursa secara aman
+    let ex2 = MockExchange::new(60.0);
+    ex2.set_price("ETHUSDT", dec!(2500), T0);
+    ex2.knobs(|k| {
+        k.unknown_place = 1;
+        k.unknown_invisible_polls = 1;
+    });
+    let mut m2 = mgr("unknown-submit-reconcile", ex2, OrphanPolicy::PlaceSl);
+    let cid2 = m2
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(m2.book.trades[&cid2].state, TradeState::UnknownSubmit);
+    m2.reconcile(T0 + 500).await.unwrap();
+    assert_eq!(m2.book.trades[&cid2].state, TradeState::Open);
+    assert!(m2.book.trades[&cid2].sl_algo.is_some());
+}
+
+#[tokio::test]
+async fn protect_retry_backoff_sukses_sl_missing_dan_flatten_kill_gr8() {
+    // 1. place_algo gagal 2 kali lalu sukses pada percobaan ke-3; konfirmasi >2 dtk memicu SL_MISSING
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    ex.knobs(|k| {
+        k.fail_algo = 2;
+    });
+    let rec = std::sync::Arc::new(apex_oms::notifier::RecordingNotifier::new());
+    let mut m = mgr("protect-retry-ok", ex, OrphanPolicy::PlaceSl).with_notifier(rec.clone());
+    let cid = m
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(m.book.trades[&cid].state, TradeState::Open);
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+    assert!(!m.kill.is_engaged());
+
+    // Simulasikan ulang pemasangan SL yang baru terkonfirmasi pada T0 + 2500 ms (>2000 ms GR-8)
+    let old_sl = m.book.trades[&cid].sl_algo.unwrap();
+    m.ex.cancel_algo("ETHUSDT", old_sl).await.unwrap();
+    m.book.trades.get_mut(&cid).unwrap().sl_algo = None;
+    m.protect(&cid, T0 + 2_500).await;
+    assert!(m.book.trades[&cid].sl_algo.is_some());
+    assert_eq!(m.audit.count("SL_MISSING"), 1);
+    assert_eq!(rec.count_event("SL_MISSING"), 1);
+    assert!(!m.kill.is_engaged());
+
+    // 2. Gagal terus melewati batas retry -> flatten reduceOnly + engage_kill
+    let ex_fail = MockExchange::new(60.0);
+    ex_fail.set_price("ETHUSDT", dec!(2500), T0);
+    ex_fail.knobs(|k| {
+        k.fail_algo = 10;
+    });
+    let mut m_fail = mgr("protect-retry-fail", ex_fail, OrphanPolicy::PlaceSl);
+    m_fail.cfg.protection_retries = 2;
+    m_fail.cfg.protection_timeout_ms = 250;
+    let cid_fail = m_fail
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !m_fail.book.trades.contains_key(&cid_fail),
+        "posisi wajib sudah di-flatten"
+    );
+    assert_eq!(m_fail.book.closed.len(), 1);
+    assert!(m_fail.kill.is_engaged());
+
+    // 3. Jalur would_trigger tetap langsung flatten + kill tanpa menunggu retry sia-sia
+    let ex_wt = MockExchange::new(60.0);
+    ex_wt.set_price("ETHUSDT", dec!(2500), T0);
+    ex_wt.knobs(|k| {
+        k.market_ack_only = true;
+    });
+    let mut m_wt = mgr("protect-would-trigger", ex_wt, OrphanPolicy::PlaceSl);
+    let cid_wt = m_wt
+        .submit(
+            intent(Side::Long, dec!(2500), dec!(2440), EntryKind::Market),
+            T0,
+        )
+        .await
+        .unwrap();
+    m_wt.ex.knobs(|k| {
+        k.market_ack_only = false;
+    });
+    m_wt.ex.set_price("ETHUSDT", dec!(2430), T0 + 10);
+    pump(&mut m_wt, T0 + 10).await;
+    assert!(!m_wt.book.trades.contains_key(&cid_wt));
+    assert!(m_wt.kill.is_engaged());
+    let algo_calls = m_wt
+        .ex
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("algo "))
+        .count();
+    assert_eq!(
+        algo_calls, 1,
+        "would_trigger harus langsung keluar tanpa retry sia-sia"
+    );
+}
+
+#[tokio::test]
+async fn notifier_merekam_event_penting_tanpa_http() {
+    let ex = MockExchange::new(60.0);
+    ex.set_price("ETHUSDT", dec!(2500), T0);
+    ex.inject_position("ETHUSDT", dec!(0.02), dec!(2500));
+    let rec = std::sync::Arc::new(apex_oms::notifier::RecordingNotifier::new());
+    let mut m = mgr("notifier-events", ex, OrphanPolicy::PlaceSl).with_notifier(rec.clone());
+    m.risk_cfg.daily_sl_limit = 1;
+
+    m.boot(T0).await.unwrap();
+    assert_eq!(rec.count_event("BOOT"), 1);
+    assert_eq!(rec.count_event("RECONCILE_ORPHAN"), 1);
+
+    // Tutup posisi orphan sebagai StopLoss -> memicu DAILY_STOP karena max_daily_sl = 1
+    let orphan_cid = m.book.trades.keys().next().unwrap().clone();
+    m.ex.set_price("ETHUSDT", dec!(2440), T0 + 1_000);
+    m.close_trade(&orphan_cid, ExitKind::StopLoss, T0 + 1_000)
+        .await
+        .unwrap();
+    assert_eq!(rec.count_event("DAILY_STOP"), 1);
+
+    m.engage_kill("manual-test", false, T0 + 2_000).await;
+    assert_eq!(rec.count_event("KILL_ENGAGED"), 1);
+
+    m.shutdown(T0 + 3_000);
+    assert_eq!(rec.count_event("SHUTDOWN"), 1);
+}

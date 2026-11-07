@@ -2,6 +2,11 @@
 //! Directional Battle Arena, Trend-Reversal Exit, Binance IP Rate-Limit Guard, Mirror Reconciler,
 //! serta Learning/Probability/Payoff/5-Whys Forensics ArtaTrade
 //! — khusus mode SCALP (tanpa strategi SWING `RSW`).
+#![allow(
+    clippy::neg_cmp_op_on_partial_ord,
+    clippy::too_many_arguments,
+    clippy::unnecessary_sort_by
+)]
 
 use std::collections::HashMap;
 
@@ -59,7 +64,12 @@ pub fn fixed_risk_levels(
     risk_usd: f64,
     tp_usd: f64,
 ) -> Option<FixedRiskLevels> {
-    if !(entry_price > 0.0) || !(qty > 0.0) || !(tick_size > 0.0) || !(risk_usd > 0.0) || !(tp_usd > 0.0) {
+    if !(entry_price > 0.0)
+        || !(qty > 0.0)
+        || !(tick_size > 0.0)
+        || !(risk_usd > 0.0)
+        || !(tp_usd > 0.0)
+    {
         return None;
     }
     let mut sl_dist = quantize_step_floor(risk_usd / qty, tick_size);
@@ -118,7 +128,8 @@ pub fn structural_risk_sizing(
     max_leverage: u32,
 ) -> StructuralRiskSizingResult {
     let struct_dist = (entry_price - structural_sl_price).abs();
-    if !(entry_price > 0.0) || !(struct_dist > 0.0) || !(step_size > 0.0) || !(margin_cap_usd > 0.0) {
+    if !(entry_price > 0.0) || !(struct_dist > 0.0) || !(step_size > 0.0) || !(margin_cap_usd > 0.0)
+    {
         return StructuralRiskSizingResult {
             ok: false,
             qty: 0.0,
@@ -216,7 +227,8 @@ pub fn build_sl_tp_menu_scalp(
     if !(entry > 0.0) || !entry.is_finite() || !(structural_sl > 0.0) {
         return None;
     }
-    let raw_pct = ((entry - structural_sl).abs() / entry).clamp(SCALP_SL_BAND_MIN, SCALP_SL_BAND_MAX);
+    let raw_pct =
+        ((entry - structural_sl).abs() / entry).clamp(SCALP_SL_BAND_MIN, SCALP_SL_BAND_MAX);
     let sl_a = match side {
         Side::Long => entry * (1.0 - raw_pct),
         Side::Short => entry * (1.0 + raw_pct),
@@ -236,7 +248,8 @@ pub fn build_sl_tp_menu_scalp(
     } else {
         0.004
     };
-    let buf_pct = (raw_pct + SCALP_SL_BUFFER_ATR * eff_atr_pct).clamp(SCALP_SL_BAND_MIN, SCALP_SL_BAND_MAX);
+    let buf_pct =
+        (raw_pct + SCALP_SL_BUFFER_ATR * eff_atr_pct).clamp(SCALP_SL_BAND_MIN, SCALP_SL_BAND_MAX);
     if buf_pct > raw_pct + 1e-6 {
         let sl_b = match side {
             Side::Long => entry * (1.0 - buf_pct),
@@ -344,7 +357,8 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
             allow_macro_override: true,
             allow_exploration_go: true,
             exploration_min_confidence: 55,
-            directive: "MODE EKSPLORASI L0: nilai SEMUA kandidat MTF segar + volume OK. Ambang lunak 45.",
+            directive:
+                "MODE EKSPLORASI L0: nilai SEMUA kandidat MTF segar + volume OK. Ambang lunak 45.",
         },
         1 => ProgressiveThresholds {
             level: 1,
@@ -360,7 +374,8 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
             allow_macro_override: true,
             allow_exploration_go: true,
             exploration_min_confidence: 60,
-            directive: "MODE EKSPLORASI L1: ambang lunak 50. Pilih yang konfluensinya paling meyakinkan.",
+            directive:
+                "MODE EKSPLORASI L1: ambang lunak 50. Pilih yang konfluensinya paling meyakinkan.",
         },
         2 => ProgressiveThresholds {
             level: 2,
@@ -376,7 +391,8 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
             allow_macro_override: false,
             allow_exploration_go: true,
             exploration_min_confidence: 65,
-            directive: "MODE TRANSISI L2: ambang 55. Mulai selektif; sideways hanya bila bukti tren kuat.",
+            directive:
+                "MODE TRANSISI L2: ambang 55. Mulai selektif; sideways hanya bila bukti tren kuat.",
         },
         3 => ProgressiveThresholds {
             level: 3,
@@ -490,27 +506,132 @@ pub struct AgentMeshNode {
 }
 
 pub const ALL_21_AGENTS: &[AgentMeshNode] = &[
-    AgentMeshNode { id: "macro-scout", name: "Vega", role: "Pengamat matriks 6 kondisi BTC.D x BTC Price sebelum entry alt", status: "ACTIVE" },
-    AgentMeshNode { id: "universe-curator", name: "Sena", role: "Kurator Universe Simbol & Blacklist Crypto-Only", status: "ACTIVE" },
-    AgentMeshNode { id: "regime-analyst", name: "Rhea", role: "Analis Regime Pasar & Volatilitas (ZLEMA + Shield)", status: "ACTIVE" },
-    AgentMeshNode { id: "scanner-supervisor", name: "Bima", role: "Koordinator Worker Scanner Pool (7-Gate SCALP)", status: "ACTIVE" },
-    AgentMeshNode { id: "setup-judge", name: "Arka", role: "Hakim Penilai Setup, Konfluensi & Pilihan SL/TP Menu", status: "ACTIVE" },
-    AgentMeshNode { id: "risk-officer", name: "Wardha", role: "Perwira Kepatuhan Risiko $1 & Margin Cap $4.80", status: "ACTIVE" },
-    AgentMeshNode { id: "trade-supervisor", name: "Nadira", role: "Supervisor Eksekusi TP/SL/Timeout & Trend-Flip Exit", status: "ACTIVE" },
-    AgentMeshNode { id: "watchdog", name: "Raksa", role: "Pengawas Infrastruktur, Rate-Limit & Failover Host", status: "ACTIVE" },
-    AgentMeshNode { id: "post-mortem", name: "Sesha", role: "Evaluator Bedah Kasus Loss & Klasifikasi Mistake", status: "IDLE" },
-    AgentMeshNode { id: "strategy-tuner", name: "Laras", role: "Peneliti Penyetel Parameter Bounded <=10%", status: "STANDBY" },
-    AgentMeshNode { id: "backtest-auditor", name: "Varuna", role: "Auditor Sertifikasi Gate Backtest & CPCV", status: "STANDBY" },
-    AgentMeshNode { id: "narrator", name: "Kirana", role: "Pencerita Ringkasan Tim & Buletin Harian", status: "STANDBY" },
-    AgentMeshNode { id: "trade-evaluator", name: "Mira", role: "Evaluator Hasil Trade & Feedback Loop (5-Why)", status: "IDLE" },
-    AgentMeshNode { id: "market-context", name: "Sari", role: "Analis Konteks Pasar Cepat (Ringkasan Pasar)", status: "ACTIVE" },
-    AgentMeshNode { id: "signal-analyst", name: "Tala", role: "Analis Sinyal Cepat (Evaluasi Sinyal 24 Jam)", status: "ACTIVE" },
-    AgentMeshNode { id: "funnel-analyst", name: "Giri", role: "Analis Funnel Cepat (Kualitas Gate & Penolakan)", status: "ACTIVE" },
-    AgentMeshNode { id: "thesis-long", name: "Arya", role: "Advokat Tesis LONG di Arena Tesis", status: "STANDBY" },
-    AgentMeshNode { id: "thesis-short", name: "Bayu", role: "Advokat Tesis SHORT di Arena Tesis", status: "STANDBY" },
-    AgentMeshNode { id: "thesis-referee", name: "Ratih", role: "Juri Kualitas Tesis Arena (Anti-Looping)", status: "STANDBY" },
-    AgentMeshNode { id: "drex", name: "Drex", role: "Agen Analisis Visual & Shadow Judge", status: "ACTIVE" },
-    AgentMeshNode { id: "panel-ai", name: "Panel AI", role: "Sintesis 5 Panel Mikrostruktur & Orderflow", status: "ACTIVE" },
+    AgentMeshNode {
+        id: "macro-scout",
+        name: "Vega",
+        role: "Pengamat matriks 6 kondisi BTC.D x BTC Price sebelum entry alt",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "universe-curator",
+        name: "Sena",
+        role: "Kurator Universe Simbol & Blacklist Crypto-Only",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "regime-analyst",
+        name: "Rhea",
+        role: "Analis Regime Pasar & Volatilitas (ZLEMA + Shield)",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "scanner-supervisor",
+        name: "Bima",
+        role: "Koordinator Worker Scanner Pool (7-Gate SCALP)",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "setup-judge",
+        name: "Arka",
+        role: "Hakim Penilai Setup, Konfluensi & Pilihan SL/TP Menu",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "risk-officer",
+        name: "Wardha",
+        role: "Perwira Kepatuhan Risiko $1 & Margin Cap $4.80",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "trade-supervisor",
+        name: "Nadira",
+        role: "Supervisor Eksekusi TP/SL/Timeout & Trend-Flip Exit",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "watchdog",
+        name: "Raksa",
+        role: "Pengawas Infrastruktur, Rate-Limit & Failover Host",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "post-mortem",
+        name: "Sesha",
+        role: "Evaluator Bedah Kasus Loss & Klasifikasi Mistake",
+        status: "IDLE",
+    },
+    AgentMeshNode {
+        id: "strategy-tuner",
+        name: "Laras",
+        role: "Peneliti Penyetel Parameter Bounded <=10%",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "backtest-auditor",
+        name: "Varuna",
+        role: "Auditor Sertifikasi Gate Backtest & CPCV",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "narrator",
+        name: "Kirana",
+        role: "Pencerita Ringkasan Tim & Buletin Harian",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "trade-evaluator",
+        name: "Mira",
+        role: "Evaluator Hasil Trade & Feedback Loop (5-Why)",
+        status: "IDLE",
+    },
+    AgentMeshNode {
+        id: "market-context",
+        name: "Sari",
+        role: "Analis Konteks Pasar Cepat (Ringkasan Pasar)",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "signal-analyst",
+        name: "Tala",
+        role: "Analis Sinyal Cepat (Evaluasi Sinyal 24 Jam)",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "funnel-analyst",
+        name: "Giri",
+        role: "Analis Funnel Cepat (Kualitas Gate & Penolakan)",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "thesis-long",
+        name: "Arya",
+        role: "Advokat Tesis LONG di Arena Tesis",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "thesis-short",
+        name: "Bayu",
+        role: "Advokat Tesis SHORT di Arena Tesis",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "thesis-referee",
+        name: "Ratih",
+        role: "Juri Kualitas Tesis Arena (Anti-Looping)",
+        status: "STANDBY",
+    },
+    AgentMeshNode {
+        id: "drex",
+        name: "Drex",
+        role: "Agen Analisis Visual & Shadow Judge",
+        status: "ACTIVE",
+    },
+    AgentMeshNode {
+        id: "panel-ai",
+        name: "Panel AI",
+        role: "Sintesis 5 Panel Mikrostruktur & Orderflow",
+        status: "ACTIVE",
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -574,76 +695,78 @@ pub fn convene_deterministic_council(
 
     // 2. Arka (setup-judge)
     let knn_val = knn_prob.unwrap_or(0.55);
-    let (arka_stance, arka_conf, arka_reason) = if composite_score >= 60 && cvd_aligned && knn_val >= 0.45 {
-        let c = (composite_score as f64 * 0.7 + knn_val * 30.0).clamp(62.0, 95.0);
-        (
-            "GO",
-            c,
-            format!(
-                "Skor konfluensi {}/100, KNN {:.0}%, dan CVD searah {}.",
-                composite_score,
-                knn_val * 100.0,
-                side_str(side)
-            ),
-        )
-    } else if composite_score < 50 || !cvd_aligned {
-        (
-            "HOLD",
-            55.0,
-            format!(
-                "Skor {}/100 atau CVD belum konfluen penuh (KNN {:.0}%).",
-                composite_score,
-                knn_val * 100.0
-            ),
-        )
-    } else {
-        (
-            "GO",
-            64.0,
-            format!(
-                "Setup memenuhi lantai konfluensi ({}/100, KNN {:.0}%).",
-                composite_score,
-                knn_val * 100.0
-            ),
-        )
-    };
+    let (arka_stance, arka_conf, arka_reason) =
+        if composite_score >= 60 && cvd_aligned && knn_val >= 0.45 {
+            let c = (composite_score as f64 * 0.7 + knn_val * 30.0).clamp(62.0, 95.0);
+            (
+                "GO",
+                c,
+                format!(
+                    "Skor konfluensi {}/100, KNN {:.0}%, dan CVD searah {}.",
+                    composite_score,
+                    knn_val * 100.0,
+                    side_str(side)
+                ),
+            )
+        } else if composite_score < 50 || !cvd_aligned {
+            (
+                "HOLD",
+                55.0,
+                format!(
+                    "Skor {}/100 atau CVD belum konfluen penuh (KNN {:.0}%).",
+                    composite_score,
+                    knn_val * 100.0
+                ),
+            )
+        } else {
+            (
+                "GO",
+                64.0,
+                format!(
+                    "Setup memenuhi lantai konfluensi ({}/100, KNN {:.0}%).",
+                    composite_score,
+                    knn_val * 100.0
+                ),
+            )
+        };
 
     // 3. Wardha (risk-officer) — aturan 5 Nov 2026: band SL SCALP 2%-4% normal walau rasio ATR 0.5x-1.5x;
     // hanya veto bila rasio < 0.50x atau SL di luar band [1.2%, 4.2%].
-    let (wardha_stance, wardha_conf, wardha_reason, sl_choice) = if sl_atr_ratio > 0.0 && sl_atr_ratio < 0.50 {
-        (
-            "NO_GO",
-            85.0,
-            format!(
-                "Rasio SL/ATR {:.2}x < 0.50x berada di dalam noise intrabar.",
-                sl_atr_ratio
-            ),
-            "B",
-        )
-    } else if !(0.012..=0.045).contains(&sl_pct) {
-        (
-            "HOLD",
-            65.0,
-            format!(
-                "Jarak SL {:.2}% berada di luar pita optimal SCALP.",
-                sl_pct * 100.0
-            ),
-            "A",
-        )
-    } else {
-        let choice = if sl_atr_ratio < 0.85 { "B" } else { "A" };
-        (
-            "GO",
-            80.0,
-            format!(
-                "Risiko terkunci $1.00, jarak SL {:.2}% ({:.2}x ATR), varian MENU_SL_{}.",
-                sl_pct * 100.0,
-                sl_atr_ratio,
-                choice
-            ),
-            choice,
-        )
-    };
+    let (wardha_stance, wardha_conf, wardha_reason, sl_choice) =
+        if sl_atr_ratio > 0.0 && sl_atr_ratio < 0.50 {
+            (
+                "NO_GO",
+                85.0,
+                format!(
+                    "Rasio SL/ATR {:.2}x < 0.50x berada di dalam noise intrabar.",
+                    sl_atr_ratio
+                ),
+                "B",
+            )
+        } else if !(0.012..=0.045).contains(&sl_pct) {
+            (
+                "HOLD",
+                65.0,
+                format!(
+                    "Jarak SL {:.2}% berada di luar pita optimal SCALP.",
+                    sl_pct * 100.0
+                ),
+                "A",
+            )
+        } else {
+            let choice = if sl_atr_ratio < 0.85 { "B" } else { "A" };
+            (
+                "GO",
+                80.0,
+                format!(
+                    "Risiko terkunci $1.00, jarak SL {:.2}% ({:.2}x ATR), varian MENU_SL_{}.",
+                    sl_pct * 100.0,
+                    sl_atr_ratio,
+                    choice
+                ),
+                choice,
+            )
+        };
 
     let votes = vec![
         CouncilVote {
@@ -683,7 +806,10 @@ pub fn convene_deterministic_council(
             .filter(|v| v.stance == "NO_GO")
             .map(|v| format!("{}: {}", v.agent_name, v.reasoning))
             .collect();
-        ("REJECT", format!("VETO AKTIF. Alasan: {}", vetoes.join("; ")))
+        (
+            "REJECT",
+            format!("VETO AKTIF. Alasan: {}", vetoes.join("; ")),
+        )
     } else if go_votes >= 2 && avg_conf >= 60.0 {
         (
             "EXECUTE",
@@ -877,8 +1003,7 @@ impl TrendFlipConfirmationGuard {
             }
             prev.last_at_ms = now_ms;
             prev.observations += 1;
-            if prev.observations >= 2
-                && now_ms - prev.first_at_ms >= TREND_FLIP_CONFIRMATION_MIN_MS
+            if prev.observations >= 2 && now_ms - prev.first_at_ms >= TREND_FLIP_CONFIRMATION_MIN_MS
             {
                 self.pending.remove(&key);
                 return true;
@@ -1033,7 +1158,9 @@ impl Default for BinanceRateGuard {
 
 impl BinanceRateGuard {
     pub fn new(budget_per_min: u32, critical_reserve_weight: u32) -> Self {
-        let bulk = budget_per_min.saturating_sub(critical_reserve_weight).max(100);
+        let bulk = budget_per_min
+            .saturating_sub(critical_reserve_weight)
+            .max(100);
         Self {
             budget_per_min,
             critical_reserve_weight,
@@ -1477,7 +1604,15 @@ mod tests {
         assert_eq!(summary.wins, 5);
         assert!(summary.wilson95_pct.is_some());
 
-        let fw = generate_five_whys_forensics("HAEDALUSDT", "S-02", -1.0, -1.0, 0.85, 1.0, "REVERSAL_AFTER_MFE");
+        let fw = generate_five_whys_forensics(
+            "HAEDALUSDT",
+            "S-02",
+            -1.0,
+            -1.0,
+            0.85,
+            1.0,
+            "REVERSAL_AFTER_MFE",
+        );
         assert_eq!(fw.layers.len(), 5);
         assert_eq!(fw.terminated, "COMPLETE");
     }

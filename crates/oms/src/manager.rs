@@ -1,10 +1,11 @@
 //! OrderManager: state machine entry → proteksi → exit, reconcile, kill switch, persist, audit.
 //!
-//! Siklus trade: `PendingEntry` → (fill) → `Open` (SL+TP algo terpasang) → `Closing` → `Closed`.
+//! Siklus trade: `PendingEntry` / `UnknownSubmit` → (fill) → `Open` (SL+TP algo terpasang) → `Closing` → `Closed`.
 //! `Unprotected` = posisi ada tapi SL gagal dipasang DAN flatten gagal → kill switch aktif,
 //! posisi TETAP di buku dan dicoba ulang setiap `tick()`.
 use crate::exchange::FuturesExchange;
 use crate::killswitch::KillSwitch;
+use crate::notifier::{NoopNotifier, Notifier};
 use crate::safety::ExecMode;
 use crate::store::{StateStore, StoreError};
 use crate::types::*;
@@ -19,10 +20,31 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+/// Jadwal backoff kumulatif (ms sejak `unknown_since_ms`) untuk re-query `UnknownSubmit`:
+/// langkah jeda `[1s, 2s, 4s, 8s, 15s]` → kumulatif `[1s, 3s, 7s, 15s, 30s]`.
+pub const UNKNOWN_CUM_BACKOFF_MS: [i64; 5] = [1_000, 3_000, 7_000, 15_000, 30_000];
+
+/// Jadwal backoff antar percobaan pemasangan SL algo (ms) sesuai GR-8.
+pub const SL_RETRY_BACKOFF_MS: [u64; 4] = [100, 250, 500, 1_000];
+
+fn default_true() -> bool {
+    true
+}
+
+pub fn strategy_has_backtest(code: &str) -> bool {
+    let u = code.trim().to_ascii_uppercase();
+    !matches!(
+        u.as_str(),
+        "S01" | "S-01" | "S01_SWEEP" | "SWEEP" | "S02" | "S-02" | "S02_SNIPER" | "SNIPER"
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeState {
     PendingEntry,
+    UnknownSubmit,
     Open,
     Unprotected,
     Closing,
@@ -56,6 +78,14 @@ pub struct ManagedTrade {
     pub knn_features: Option<[f64; 5]>,
     #[serde(default)]
     pub knn_signal_ms: Option<Ms>,
+    #[serde(default)]
+    pub unknown_since_ms: Option<Ms>,
+    #[serde(default)]
+    pub unknown_attempts: u8,
+    #[serde(default)]
+    pub fill_confirmed_at: Option<Ms>,
+    #[serde(default = "default_true")]
+    pub validated: bool,
     pub filled_ms: Option<Ms>,
     pub closed_ms: Option<Ms>,
     pub exit_price: Option<Decimal>,
@@ -130,6 +160,7 @@ pub struct OrderManager<E: FuturesExchange> {
     pub store: StateStore,
     pub audit: AuditLog,
     pub kill: KillSwitch,
+    pub notifier: Arc<dyn Notifier>,
     filters: BTreeMap<String, SymbolFilters>,
     /// jeda backoff rate-limit maksimum (ms)
     pub max_backoff_ms: u64,
@@ -142,10 +173,17 @@ macro_rules! rl {
         let mut n = 0u32;
         loop {
             match $call.await {
-                Err(ExError::RateLimited { retry_after_ms, banned: false }) if n < 4 => {
+                Err(ExError::RateLimited {
+                    retry_after_ms,
+                    banned: false,
+                }) if n < 4 => {
                     n += 1;
                     let wait = retry_after_ms.max(50 * (1 << n)).min($self.max_backoff_ms);
-                    $self.audit.log(apex_core::time::now_ms(), "RATE_LIMIT_BACKOFF", json!({"wait_ms": wait, "attempt": n}));
+                    $self.audit.log(
+                        apex_core::time::now_ms(),
+                        "RATE_LIMIT_BACKOFF",
+                        json!({"wait_ms": wait, "attempt": n}),
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                 }
                 r => break r,
@@ -202,10 +240,20 @@ impl<E: FuturesExchange> OrderManager<E> {
             store,
             audit,
             kill,
+            notifier: Arc::new(NoopNotifier),
             filters,
             max_backoff_ms: 30_000,
             consecutive_save_failures: 0,
         })
+    }
+
+    pub fn with_notifier(mut self, notifier: Arc<dyn Notifier>) -> Self {
+        self.notifier = notifier;
+        self
+    }
+
+    pub fn set_notifier(&mut self, notifier: Arc<dyn Notifier>) {
+        self.notifier = notifier;
     }
 
     pub fn save(&mut self) -> Result<(), StoreError> {
@@ -216,11 +264,18 @@ impl<E: FuturesExchange> OrderManager<E> {
             }
             Err(e) => {
                 self.consecutive_save_failures = self.consecutive_save_failures.saturating_add(1);
+                let ts = apex_core::time::now_ms();
+                let msg = format!(
+                    "gagal menyimpan state OMS (berturut-turut={}): {e}",
+                    self.consecutive_save_failures
+                );
                 self.audit.log(
-                    apex_core::time::now_ms(),
+                    ts,
                     "STATE_SAVE_ERROR",
                     json!({"err": e.to_string(), "consecutive_failures": self.consecutive_save_failures}),
                 );
+                self.notifier
+                    .notify("CRITICAL", "STATE_SAVE_ERROR", &msg, ts);
                 Err(e)
             }
         }
@@ -238,9 +293,20 @@ impl<E: FuturesExchange> OrderManager<E> {
     pub fn open_count(&self) -> usize {
         self.active().filter(|t| t.has_position()).count()
     }
+    /// Menghitung `PendingEntry` dan `UnknownSubmit` secara konservatif terhadap `max_positions`.
     pub fn pending_count(&self) -> usize {
         self.active()
-            .filter(|t| t.state == TradeState::PendingEntry)
+            .filter(|t| {
+                matches!(
+                    t.state,
+                    TradeState::PendingEntry | TradeState::UnknownSubmit
+                )
+            })
+            .count()
+    }
+    pub fn unknown_count(&self) -> usize {
+        self.active()
+            .filter(|t| t.state == TradeState::UnknownSubmit)
             .count()
     }
     pub fn symbol_busy(&self, s: &str) -> bool {
@@ -264,8 +330,26 @@ impl<E: FuturesExchange> OrderManager<E> {
             rl!(self, self.ex.set_one_way())?;
             self.book.one_way_ok = true;
         }
-        self.audit.log(now, "BOOT", json!({"mode": format!("{:?}", self.mode), "exchange": self.ex.name(), "armed": self.armed}));
+        self.audit.log(
+            now,
+            "BOOT",
+            json!({"mode": format!("{:?}", self.mode), "exchange": self.ex.name(), "armed": self.armed}),
+        );
+        self.notifier.notify(
+            "INFO",
+            "BOOT",
+            &format!("OMS boot mode={:?} armed={}", self.mode, self.armed),
+            now,
+        );
         self.reconcile(now).await
+    }
+
+    pub fn shutdown(&mut self, now: Ms) {
+        self.audit
+            .log(now, "SHUTDOWN", json!({"mode": format!("{:?}", self.mode)}));
+        self.notifier
+            .notify("INFO", "SHUTDOWN", "OMS shutdown bersih", now);
+        let _ = self.save();
     }
 
     /// CROSSED + leverage 25x per simbol (sekali, diingat di state).
@@ -298,6 +382,7 @@ impl<E: FuturesExchange> OrderManager<E> {
         }
         let sz = &it.sizing;
         let cid = self.next_id(it.strategy.get(..2).unwrap_or("XX"), &it.symbol, now);
+        let validated = strategy_has_backtest(&it.strategy);
         let t = ManagedTrade {
             client_id: cid.clone(),
             symbol: it.symbol.clone(),
@@ -320,6 +405,10 @@ impl<E: FuturesExchange> OrderManager<E> {
             entry_final: false,
             knn_features: it.knn_features,
             knn_signal_ms: it.knn_signal_ms,
+            unknown_since_ms: None,
+            unknown_attempts: 0,
+            fill_confirmed_at: None,
+            validated,
             filled_ms: None,
             closed_ms: None,
             exit_price: None,
@@ -333,8 +422,7 @@ impl<E: FuturesExchange> OrderManager<E> {
             last_error: None,
             adopted: false,
         };
-        // Persist SEBELUM memanggil endpoint exchange mana pun agar crash pasca-kirim selalu
-        // memiliki jejak `clientOrderId`; bila persist gagal, batalkan di memori tanpa menyentuh bursa.
+        // Persist SEBELUM kirim → bila persist gagal, batalkan di memori tanpa menyentuh bursa.
         self.book.trades.insert(cid.clone(), t);
         if let Err(e) = self.save() {
             self.book.trades.remove(&cid);
@@ -362,36 +450,24 @@ impl<E: FuturesExchange> OrderManager<E> {
             reduce_only: false,
             client_id: cid.clone(),
         };
-        self.audit.log(now, "ENTRY_SUBMIT", json!({"cid": cid, "symbol": it.symbol, "side": req.side, "kind": format!("{:?}", req.kind), "qty": fmt_dec(sz.qty), "sl": fmt_dec(sz.sl), "tp": fmt_dec(sz.tp), "risk": fmt_dec(sz.risk)}));
-        let res = rl!(self, self.ex.place_order(&req));
-        let ack = match res {
-            Ok(a) => Some(a),
-            Err(ExError::Unknown(m)) => {
-                self.audit
-                    .log(now, "ENTRY_UNKNOWN", json!({"cid": cid, "msg": m}));
-                rl!(self, self.ex.query_order(&it.symbol, &cid))?
-            }
-            Err(e) => {
-                self.audit.log(
-                    now,
-                    "ENTRY_REJECTED",
-                    json!({"cid": cid, "err": e.to_string()}),
-                );
-                self.book.trades.remove(&cid);
-                self.save_or_kill(now).await;
-                return Err(e.into());
-            }
-        };
-        match ack {
-            None => {
-                self.audit.log(now, "ENTRY_NOT_FOUND", json!({"cid": cid}));
-                self.book.trades.remove(&cid);
-                self.save_or_kill(now).await;
-                Err(OmsError::Other(
-                    "order tidak ditemukan setelah outcome unknown".into(),
-                ))
-            }
-            Some(a) => {
+        self.audit.log(
+            now,
+            "ENTRY_SUBMIT",
+            json!({
+                "cid": cid,
+                "symbol": it.symbol,
+                "strategy": it.strategy,
+                "validated": validated,
+                "side": req.side,
+                "kind": format!("{:?}", req.kind),
+                "qty": fmt_dec(sz.qty),
+                "sl": fmt_dec(sz.sl),
+                "tp": fmt_dec(sz.tp),
+                "risk": fmt_dec(sz.risk),
+            }),
+        );
+        match rl!(self, self.ex.place_order(&req)) {
+            Ok(a) => {
                 self.apply_entry_status(
                     &cid,
                     a.status,
@@ -403,10 +479,62 @@ impl<E: FuturesExchange> OrderManager<E> {
                 .await;
                 Ok(cid)
             }
+            Err(ExError::Unknown(m)) => {
+                self.audit
+                    .log(now, "ENTRY_UNKNOWN", json!({"cid": cid, "msg": m}));
+                match rl!(self, self.ex.query_order(&it.symbol, &cid)) {
+                    Ok(Some(a)) => {
+                        self.apply_entry_status(
+                            &cid,
+                            a.status,
+                            a.executed_qty,
+                            a.avg_price,
+                            Decimal::ZERO,
+                            a.update_ms.max(now),
+                        )
+                        .await;
+                        Ok(cid)
+                    }
+                    Ok(None) | Err(ExError::Unknown(_)) => {
+                        if let Some(tr) = self.book.trades.get_mut(&cid) {
+                            tr.state = TradeState::UnknownSubmit;
+                            tr.unknown_since_ms = Some(now);
+                            tr.unknown_attempts = 0;
+                        }
+                        self.audit.log(
+                            now,
+                            "ENTRY_UNKNOWN_QUEUED",
+                            json!({"cid": cid, "symbol": it.symbol}),
+                        );
+                        self.save_or_kill(now).await;
+                        Ok(cid)
+                    }
+                    Err(e) => {
+                        self.audit.log(
+                            now,
+                            "ENTRY_REJECTED",
+                            json!({"cid": cid, "err": e.to_string()}),
+                        );
+                        self.book.trades.remove(&cid);
+                        self.save_or_kill(now).await;
+                        Err(e.into())
+                    }
+                }
+            }
+            Err(e) => {
+                self.audit.log(
+                    now,
+                    "ENTRY_REJECTED",
+                    json!({"cid": cid, "err": e.to_string()}),
+                );
+                self.book.trades.remove(&cid);
+                self.save_or_kill(now).await;
+                Err(e.into())
+            }
         }
     }
 
-    /// Terapkan status entry (dari ACK REST atau event stream). Idempoten via cum qty.
+    /// Terapkan status entry (dari ACK REST, re-query `UnknownSubmit`, atau event stream). Idempoten via cum qty.
     async fn apply_entry_status(
         &mut self,
         cid: &str,
@@ -421,6 +549,9 @@ impl<E: FuturesExchange> OrderManager<E> {
         };
         if !t.is_active() {
             return;
+        }
+        if t.state == TradeState::UnknownSubmit && cum.is_zero() && !status.is_final() {
+            t.state = TradeState::PendingEntry;
         }
         t.entry_final |= status.is_final();
         let mut newly_filled = false;
@@ -439,9 +570,13 @@ impl<E: FuturesExchange> OrderManager<E> {
             } else {
                 t.fees += fee;
             }
-            if t.state == TradeState::PendingEntry {
+            if matches!(
+                t.state,
+                TradeState::PendingEntry | TradeState::UnknownSubmit
+            ) {
                 t.state = TradeState::Open;
                 t.filled_ms = Some(ts);
+                t.fill_confirmed_at.get_or_insert(ts);
                 newly_filled = true;
             }
         }
@@ -450,28 +585,145 @@ impl<E: FuturesExchange> OrderManager<E> {
             OrderStatus::Canceled | OrderStatus::Expired | OrderStatus::Rejected
         ) && t.filled_qty.is_zero();
         if cancelled_empty {
-            let t = self.book.trades.remove(cid).unwrap();
-            self.audit.log(
-                ts,
-                "ENTRY_CANCELLED",
-                json!({"cid": cid, "symbol": t.symbol, "status": format!("{status:?}")}),
-            );
+            if let Some(removed) = self.book.trades.remove(cid) {
+                self.audit.log(
+                    ts,
+                    "ENTRY_CANCELLED",
+                    json!({"cid": cid, "symbol": removed.symbol, "status": format!("{status:?}")}),
+                );
+            }
             self.save_or_kill(ts).await;
             return;
         }
         if newly_filled {
             let (s, q, p) = (t.symbol.clone(), t.filled_qty, t.avg_fill);
-            self.audit.log(ts, "ENTRY_FILLED", json!({"cid": cid, "symbol": s, "qty": fmt_dec(q), "avg": fmt_dec(p), "status": format!("{status:?}")}));
+            self.audit.log(
+                ts,
+                "ENTRY_FILLED",
+                json!({"cid": cid, "symbol": s, "qty": fmt_dec(q), "avg": fmt_dec(p), "status": format!("{status:?}")}),
+            );
         }
         self.save_or_kill(ts).await;
         if self
             .book
             .trades
             .get(cid)
-            .is_some_and(|t| t.has_position() && t.sl_algo.is_none())
+            .is_some_and(|tr| tr.has_position() && tr.sl_algo.is_none())
         {
             self.protect(cid, ts).await;
         }
+    }
+
+    /// Kendalikan re-query order berstatus `UnknownSubmit` dengan jadwal backoff `[1s, 2s, 4s, 8s, 15s]`.
+    pub async fn tick_unknown(&mut self, now: Ms) {
+        let unknowns: Vec<(String, String, Ms, u8)> = self
+            .active()
+            .filter(|t| t.state == TradeState::UnknownSubmit)
+            .map(|t| {
+                (
+                    t.client_id.clone(),
+                    t.symbol.clone(),
+                    t.unknown_since_ms.unwrap_or(t.created_ms),
+                    t.unknown_attempts,
+                )
+            })
+            .collect();
+        for (cid, sym, since, attempts) in unknowns {
+            let idx = (attempts as usize).min(UNKNOWN_CUM_BACKOFF_MS.len() - 1);
+            if (attempts as usize) < UNKNOWN_CUM_BACKOFF_MS.len()
+                && now.saturating_sub(since) < UNKNOWN_CUM_BACKOFF_MS[idx]
+            {
+                continue;
+            }
+            let next_attempt = attempts.saturating_add(1);
+            if let Some(tr) = self.book.trades.get_mut(&cid) {
+                tr.unknown_attempts = next_attempt;
+            }
+            match rl!(self, self.ex.query_order(&sym, &cid)) {
+                Ok(Some(a)) => {
+                    self.audit.log(
+                        now,
+                        "UNKNOWN_RESOLVED_BY_QUERY",
+                        json!({"cid": cid, "symbol": sym, "attempt": next_attempt, "status": format!("{:?}", a.status)}),
+                    );
+                    self.apply_entry_status(
+                        &cid,
+                        a.status,
+                        a.executed_qty,
+                        a.avg_price,
+                        Decimal::ZERO,
+                        a.update_ms.max(now),
+                    )
+                    .await;
+                }
+                Ok(None) | Err(_) => {
+                    if (next_attempt as usize) >= UNKNOWN_CUM_BACKOFF_MS.len() {
+                        self.resolve_unknown_final(&cid, &sym, now).await;
+                    } else {
+                        self.save_or_kill(now).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn resolve_unknown_final(&mut self, cid: &str, sym: &str, now: Ms) {
+        if let Ok(open_ords) = rl!(self, self.ex.open_orders()) {
+            if let Some(o) = open_ords
+                .into_iter()
+                .find(|o| o.client_id == cid || (o.symbol == sym && !o.reduce_only))
+            {
+                self.apply_entry_status(
+                    cid,
+                    o.status,
+                    o.executed_qty,
+                    o.avg_price,
+                    Decimal::ZERO,
+                    o.update_ms.max(now),
+                )
+                .await;
+                return;
+            }
+        }
+        if let Ok(positions) = rl!(self, self.ex.positions()) {
+            if let Some(p) = positions
+                .into_iter()
+                .find(|p| p.symbol == sym && !p.amt.is_zero())
+            {
+                self.adopt_unknown_position(cid, &p, now).await;
+                return;
+            }
+        }
+        self.book.trades.remove(cid);
+        self.audit.log(
+            now,
+            "ENTRY_NOT_FOUND_FINAL",
+            json!({"cid": cid, "symbol": sym, "attempts": UNKNOWN_CUM_BACKOFF_MS.len()}),
+        );
+        self.save_or_kill(now).await;
+    }
+
+    async fn adopt_unknown_position(&mut self, cid: &str, p: &PositionInfo, now: Ms) {
+        if let Some(tr) = self.book.trades.get_mut(cid) {
+            tr.state = TradeState::Open;
+            tr.filled_qty = p.amt.abs();
+            if !p.entry_price.is_zero() {
+                tr.avg_fill = p.entry_price;
+            } else {
+                tr.avg_fill = tr.entry_price;
+            }
+            tr.entry_final = true;
+            tr.filled_ms = Some(now);
+            tr.fill_confirmed_at.get_or_insert(now);
+            tr.adopted = true;
+        }
+        self.audit.log(
+            now,
+            "UNKNOWN_ADOPTED_POSITION",
+            json!({"cid": cid, "symbol": p.symbol, "amt": fmt_dec(p.amt), "entry": fmt_dec(p.entry_price)}),
+        );
+        self.save_or_kill(now).await;
+        self.protect(cid, now).await;
     }
 
     fn algo_req(
@@ -496,7 +748,8 @@ impl<E: FuturesExchange> OrderManager<E> {
         }
     }
 
-    /// Pasang SL (wajib) dan TP. SL gagal semua retry → flatten. Flatten gagal → Unprotected + kill.
+    /// Pasang SL (wajib, GR-8: konfirmasi <=2 dtk, >2 dtk audit `SL_MISSING` + notifikasi,
+    /// >5 dtk atau retry habis → flatten `reduceOnly` + `engage_kill`) dan TP.
     pub async fn protect(&mut self, cid: &str, now: Ms) {
         let Some(t) = self.book.trades.get(cid).cloned() else {
             return;
@@ -506,10 +759,14 @@ impl<E: FuturesExchange> OrderManager<E> {
         }
         if t.sl_algo.is_none() {
             let req = self.algo_req(&t, AlgoKind::StopMarket, t.sl, "sl");
+            let max_retries = self.cfg.protection_retries.max(1);
+            let timeout_ms = self.cfg.protection_timeout_ms.max(100);
+            let confirm_base = t.fill_confirmed_at.or(t.filled_ms).unwrap_or(now);
+            let started = std::time::Instant::now();
             let mut placed = None;
             let mut would_trigger = false;
             let mut last = String::new();
-            for _ in 0..self.cfg.protection_retries.max(1) {
+            for attempt in 0..max_retries {
                 match rl!(self, self.ex.place_algo(&req)) {
                     Ok(a) => {
                         placed = Some(a.algo_id);
@@ -522,47 +779,96 @@ impl<E: FuturesExchange> OrderManager<E> {
                     }
                     Err(e) => last = e.to_string(),
                 }
+                if attempt + 1 < max_retries {
+                    let elapsed = started.elapsed().as_millis() as u64;
+                    if elapsed >= timeout_ms {
+                        break;
+                    }
+                    let step = SL_RETRY_BACKOFF_MS
+                        [(attempt as usize).min(SL_RETRY_BACKOFF_MS.len() - 1)]
+                    .min(timeout_ms - elapsed);
+                    tokio::time::sleep(std::time::Duration::from_millis(step)).await;
+                }
+            }
+            let elapsed_confirm_ms =
+                now.saturating_sub(confirm_base).max(0) + (started.elapsed().as_millis() as i64);
+            if elapsed_confirm_ms > 2_000 {
+                let msg = format!(
+                    "SL {} belum terkonfirmasi dalam <=2000 ms (elapsed={} ms)",
+                    t.symbol, elapsed_confirm_ms
+                );
+                self.audit.log(
+                    now,
+                    "SL_MISSING",
+                    json!({"cid": cid, "symbol": t.symbol, "elapsed_ms": elapsed_confirm_ms, "placed": placed.is_some()}),
+                );
+                self.notifier.notify("WARN", "SL_MISSING", &msg, now);
+            }
+            if elapsed_confirm_ms > 5_000 {
+                if let Some(id) = placed.take() {
+                    let _ = rl!(self, self.ex.cancel_algo(&t.symbol, id));
+                }
+                if last.is_empty() {
+                    last = format!("melebihi batas GR-8 5000 ms ({elapsed_confirm_ms} ms)");
+                }
             }
             match placed {
                 Some(id) => {
-                    let t = self.book.trades.get_mut(cid).unwrap();
-                    t.sl_algo = Some(id);
-                    t.state = TradeState::Open;
-                    t.last_error = None;
-                    self.audit.log(now, "SL_PLACED", json!({"cid": cid, "algo_id": id, "trigger": fmt_dec(req.trigger), "close_position": req.close_position}));
+                    if let Some(tr) = self.book.trades.get_mut(cid) {
+                        tr.sl_algo = Some(id);
+                        tr.state = TradeState::Open;
+                        tr.last_error = None;
+                    }
+                    self.audit.log(
+                        now,
+                        "SL_PLACED",
+                        json!({"cid": cid, "algo_id": id, "trigger": fmt_dec(req.trigger), "close_position": req.close_position, "elapsed_ms": elapsed_confirm_ms}),
+                    );
                     self.save_or_kill(now).await;
                 }
                 None => {
                     self.audit.log(
                         now,
                         "SL_FAILED",
-                        json!({"cid": cid, "err": last, "would_trigger": would_trigger}),
+                        json!({"cid": cid, "err": last, "would_trigger": would_trigger, "elapsed_ms": elapsed_confirm_ms}),
                     );
-                    // FR-019: tidak boleh ada posisi tanpa SL → flatten
+                    // GR-8 / FR-019: gagal pasang SL atau >5 dtk → flatten reduceOnly + engage_kill
                     if let Err(e) = self.close_trade(cid, ExitKind::StopLoss, now).await {
-                        if let Some(t) = self.book.trades.get_mut(cid) {
-                            t.state = TradeState::Unprotected;
-                            t.last_error = Some(format!("SL gagal: {last}; flatten gagal: {e}"));
-                            t.protect_attempts += 1;
+                        if let Some(tr) = self.book.trades.get_mut(cid) {
+                            tr.state = TradeState::Unprotected;
+                            tr.last_error = Some(format!("SL gagal: {last}; flatten gagal: {e}"));
+                            tr.protect_attempts += 1;
                         }
-                        let _ = self.kill.engage(&format!("UNPROTECTED {cid}"));
+                        let msg =
+                            format!("UNPROTECTED {cid}: SL gagal ({last}) & flatten gagal ({e})");
                         self.audit.log(
                             now,
                             "CRITICAL_UNPROTECTED",
                             json!({"cid": cid, "err": e.to_string()}),
                         );
+                        self.notifier
+                            .notify("CRITICAL", "CRITICAL_UNPROTECTED", &msg, now);
+                        self.engage_kill(&format!("UNPROTECTED {cid}"), false, now)
+                            .await;
                         self.save_or_kill(now).await;
+                    } else {
+                        self.engage_kill(&format!("SL_PROTECTION_FAILED {cid}"), false, now)
+                            .await;
                     }
                     return;
                 }
             }
         }
-        let t = self.book.trades.get(cid).cloned().unwrap();
+        let Some(t) = self.book.trades.get(cid).cloned() else {
+            return;
+        };
         if t.tp_algo.is_none() && t.state == TradeState::Open {
             let req = self.algo_req(&t, AlgoKind::TakeProfitMarket, t.tp, "tp");
             match rl!(self, self.ex.place_algo(&req)) {
                 Ok(a) => {
-                    self.book.trades.get_mut(cid).unwrap().tp_algo = Some(a.algo_id);
+                    if let Some(tr) = self.book.trades.get_mut(cid) {
+                        tr.tp_algo = Some(a.algo_id);
+                    }
                     self.audit.log(
                         now,
                         "TP_PLACED",
@@ -588,7 +894,10 @@ impl<E: FuturesExchange> OrderManager<E> {
         let Some(t) = self.book.trades.get(cid).cloned() else {
             return Err(OmsError::Other("trade tidak ada".into()));
         };
-        if t.state == TradeState::PendingEntry {
+        if matches!(
+            t.state,
+            TradeState::PendingEntry | TradeState::UnknownSubmit
+        ) {
             return self.cancel_entry(cid, now).await;
         }
         let close_cid = self.next_id("CL", &t.symbol, now);
@@ -774,11 +1083,29 @@ impl<E: FuturesExchange> OrderManager<E> {
         t.exit_price = Some(px);
         t.exit_kind = Some(kind);
         t.pnl_net = Some(pnl);
+        let was_daily_stop = self.book.risk.daily_stop_active(ts, &self.risk_cfg);
         self.book.risk.record_exit(kind, pnl, ts, &self.risk_cfg);
+        let now_daily_stop = self.book.risk.daily_stop_active(ts, &self.risk_cfg);
+        if !was_daily_stop && now_daily_stop {
+            let msg = format!(
+                "Daily stop aktif: daily_sl={} realized_net={:.2}",
+                self.book.risk.daily_sl_count, self.book.risk.daily_realized_net
+            );
+            self.audit.log(
+                ts,
+                "DAILY_STOP",
+                json!({"daily_sl": self.book.risk.daily_sl_count, "daily_realized_net": self.book.risk.daily_realized_net}),
+            );
+            self.notifier.notify("WARN", "DAILY_STOP", &msg, ts);
+        }
         for id in [t.sl_algo, t.tp_algo].into_iter().flatten() {
             let _ = rl!(self, self.ex.cancel_algo(&t.symbol, id));
         }
-        self.audit.log(ts, "TRADE_CLOSED", json!({"cid": cid, "symbol": t.symbol, "kind": format!("{kind:?}"), "exit": fmt_dec(px), "pnl_net": pnl, "daily_sl": self.book.risk.daily_sl_count, "cooldown_until": self.book.risk.cooldown_until}));
+        self.audit.log(
+            ts,
+            "TRADE_CLOSED",
+            json!({"cid": cid, "symbol": t.symbol, "kind": format!("{kind:?}"), "exit": fmt_dec(px), "pnl_net": pnl, "daily_sl": self.book.risk.daily_sl_count, "cooldown_until": self.book.risk.cooldown_until}),
+        );
         self.book.closed.push(t);
         self.save_or_kill(ts).await;
     }
@@ -814,7 +1141,7 @@ impl<E: FuturesExchange> OrderManager<E> {
                         .find(|t| t.symbol == o.symbol && t.has_position())
                         .map(|t| t.client_id.clone());
                     if let Some(cid) = found {
-                        let hint = self.book.trades[&cid].exit_hint;
+                        let hint = self.book.trades.get(&cid).and_then(|t| t.exit_hint);
                         let kind = match o.orig_type.as_str() {
                             "STOP_MARKET" => ExitKind::StopLoss,
                             "TAKE_PROFIT_MARKET" => ExitKind::TakeProfit,
@@ -840,7 +1167,9 @@ impl<E: FuturesExchange> OrderManager<E> {
                     })
                     .map(|t| t.client_id.clone());
                 let Some(cid) = found else { return };
-                let t = self.book.trades.get_mut(&cid).unwrap();
+                let Some(t) = self.book.trades.get_mut(&cid) else {
+                    return;
+                };
                 let is_sl = t.sl_algo == Some(algo_id);
                 match status.as_str() {
                     "TRIGGERED" | "TRIGGERING" => {
@@ -886,9 +1215,10 @@ impl<E: FuturesExchange> OrderManager<E> {
         }
     }
 
-    /// Loop periodik: roll hari, kill switch, proteksi ulang, TTL pending, finalisasi flat.
+    /// Loop periodik: roll hari, re-query `UnknownSubmit`, kill switch, proteksi ulang, TTL pending, finalisasi flat.
     pub async fn tick(&mut self, now: Ms) {
         self.book.risk.roll_day(now);
+        self.tick_unknown(now).await;
         let killed = self.kill.is_engaged();
         let flatten = killed
             && (self.cfg.flatten_on_kill
@@ -940,7 +1270,7 @@ impl<E: FuturesExchange> OrderManager<E> {
         self.save_or_kill(now).await;
     }
 
-    /// Kill switch: tulis file, batalkan pending, opsional flatten semua.
+    /// Kill switch: tulis file, batalkan pending, opsional flatten semua, dan kirim notifikasi.
     pub async fn engage_kill(&mut self, reason: &str, flatten: bool, now: Ms) {
         let _ = self.kill.engage(reason);
         self.audit.log(
@@ -948,12 +1278,20 @@ impl<E: FuturesExchange> OrderManager<E> {
             "KILL_ENGAGED",
             json!({"reason": reason, "flatten": flatten}),
         );
+        self.notifier.notify(
+            "CRITICAL",
+            "KILL_ENGAGED",
+            &format!("Kill switch aktif: {reason} (flatten={flatten})"),
+            now,
+        );
         let ids: Vec<String> = self.active().map(|t| t.client_id.clone()).collect();
         for cid in ids {
-            let st = self.book.trades[&cid].state;
+            let Some(st) = self.book.trades.get(&cid).map(|t| t.state) else {
+                continue;
+            };
             if st == TradeState::PendingEntry {
                 let _ = self.cancel_entry(&cid, now).await;
-            } else if flatten {
+            } else if flatten && matches!(st, TradeState::Open | TradeState::Unprotected) {
                 let _ = self.close_trade(&cid, ExitKind::Manual, now).await;
             }
         }
@@ -976,7 +1314,7 @@ impl<E: FuturesExchange> OrderManager<E> {
     pub async fn reconcile(&mut self, now: Ms) -> Result<(), OmsError> {
         let positions = rl!(self, self.ex.positions())?;
         let algos = rl!(self, self.ex.open_algo_orders())?;
-        // 1. pending entry lokal → cek status sebenarnya
+        // 1a. pending entry lokal → cek status sebenarnya
         let pend: Vec<(String, String)> = self
             .active()
             .filter(|t| t.state == TradeState::PendingEntry)
@@ -1002,14 +1340,69 @@ impl<E: FuturesExchange> OrderManager<E> {
                 }
             }
         }
+        // 1b. UnknownSubmit lokal → perlakukan sama dengan tick_unknown (jangan langsung dihapus bila belum kedaluwarsa)
+        let unk: Vec<(String, String, Ms, u8)> = self
+            .active()
+            .filter(|t| t.state == TradeState::UnknownSubmit)
+            .map(|t| {
+                (
+                    t.client_id.clone(),
+                    t.symbol.clone(),
+                    t.unknown_since_ms.unwrap_or(t.created_ms),
+                    t.unknown_attempts,
+                )
+            })
+            .collect();
+        for (cid, sym, since, attempts) in unk {
+            match rl!(self, self.ex.query_order(&sym, &cid)) {
+                Ok(Some(a)) => {
+                    self.apply_entry_status(
+                        &cid,
+                        a.status,
+                        a.executed_qty,
+                        a.avg_price,
+                        Decimal::ZERO,
+                        a.update_ms.max(now),
+                    )
+                    .await;
+                }
+                Ok(None) | Err(_) => {
+                    if let Some(p) = positions
+                        .iter()
+                        .find(|p| p.symbol == sym && !p.amt.is_zero())
+                    {
+                        self.adopt_unknown_position(&cid, p, now).await;
+                    } else if (attempts as usize) >= UNKNOWN_CUM_BACKOFF_MS.len()
+                        || now.saturating_sub(since) >= 30_000
+                    {
+                        self.resolve_unknown_final(&cid, &sym, now).await;
+                    }
+                }
+            }
+        }
         // 2. posisi exchange
         for p in &positions {
             let Some(side) = p.side() else { continue };
             let cid = match self.cid_on(&p.symbol) {
-                Some(c) if self.book.trades[&c].has_position() => c,
+                Some(c) if self.book.trades.get(&c).is_some_and(|t| t.has_position()) => c,
                 _ => {
                     // posisi yatim (tidak dikenal buku lokal)
-                    self.audit.log(now, "ORPHAN_POSITION", json!({"symbol": p.symbol, "amt": fmt_dec(p.amt), "entry": fmt_dec(p.entry_price), "policy": format!("{:?}", self.cfg.orphan_policy)}));
+                    self.audit.log(
+                        now,
+                        "ORPHAN_POSITION",
+                        json!({"symbol": p.symbol, "amt": fmt_dec(p.amt), "entry": fmt_dec(p.entry_price), "policy": format!("{:?}", self.cfg.orphan_policy)}),
+                    );
+                    self.notifier.notify(
+                        "WARN",
+                        "RECONCILE_ORPHAN",
+                        &format!(
+                            "Posisi yatim ditemukan saat reconcile: {} amt={} entry={}",
+                            p.symbol,
+                            fmt_dec(p.amt),
+                            fmt_dec(p.entry_price)
+                        ),
+                        now,
+                    );
                     let cid = self.next_id("OR", &p.symbol, now);
                     let sl = self.fallback_sl(&p.symbol, side, p.entry_price);
                     let tp = if side == Side::Long {
@@ -1039,6 +1432,10 @@ impl<E: FuturesExchange> OrderManager<E> {
                         entry_final: true,
                         knn_features: None,
                         knn_signal_ms: None,
+                        unknown_since_ms: None,
+                        unknown_attempts: 0,
+                        fill_confirmed_at: Some(now),
+                        validated: false,
                         filled_ms: Some(now),
                         closed_ms: None,
                         exit_price: None,
@@ -1056,11 +1453,9 @@ impl<E: FuturesExchange> OrderManager<E> {
                     cid
                 }
             };
-            {
-                let t = self.book.trades.get_mut(&cid).unwrap();
+            if let Some(t) = self.book.trades.get_mut(&cid) {
                 t.filled_qty = p.amt.abs();
                 let ex_side = exit_str(side);
-                // cocokkan algo yang benar-benar ada di exchange
                 let sl_live = algos
                     .iter()
                     .find(|a| {
@@ -1078,7 +1473,9 @@ impl<E: FuturesExchange> OrderManager<E> {
                 t.sl_algo = sl_live;
                 t.tp_algo = tp_live;
             }
-            let t = self.book.trades[&cid].clone();
+            let Some(t) = self.book.trades.get(&cid).cloned() else {
+                continue;
+            };
             if t.adopted && self.cfg.orphan_policy == OrphanPolicy::Flatten && t.sl_algo.is_none() {
                 let _ = self.close_trade(&cid, ExitKind::Manual, now).await;
             } else if t.sl_algo.is_none() || t.tp_algo.is_none() {
@@ -1097,7 +1494,12 @@ impl<E: FuturesExchange> OrderManager<E> {
             .map(|t| t.client_id.clone())
             .collect();
         for cid in gone {
-            let k = self.book.trades[&cid].exit_hint.unwrap_or(ExitKind::Manual);
+            let k = self
+                .book
+                .trades
+                .get(&cid)
+                .and_then(|t| t.exit_hint)
+                .unwrap_or(ExitKind::Manual);
             self.audit.log(now, "RECONCILE_FLAT", json!({"cid": cid}));
             self.finish_close(&cid, k, Decimal::ZERO, Decimal::ZERO, now)
                 .await;
