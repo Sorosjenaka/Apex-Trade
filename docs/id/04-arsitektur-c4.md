@@ -28,9 +28,9 @@ Dokumen ini memetakan arsitektur **Apex Trade** menggunakan pendekatan **C4 Mode
 | **Dashboard & Terminal Web (`dashboard/`)** | Server HTTP + SSE ringan (`:8787`) dengan grafik kline gelap realtime, inspeksi konsol agen, dan pemantauan kurva ekuitas |
 | **Mesin Inti Apex (`apps/apex`)** | Orkestrator siklus asinkron berbasis Tokio, CLI multi-perintah, dan pengatur *rate-limit* |
 | **Scanner Pasar 7-Gate (`apex-screener`)** | *Asset Class Guard* kripto murni, *Volume Gate*, pemindai kandidat 7-gerbang, peta likuidasi, dan *orderflow delta* |
-| **Mesin Sinyal Scalping (`apex-strategies` + `apex-indicators`)** | Evaluasi tertutup `S1_TFP`, `S01_SWEEP`, dan `S02_SNIPER` beserta ZLEMA, profil volume 48-bin, Fib, dan analog *k-NN* |
+| **Mesin Sinyal Scalping (`apex-strategies` + `apex-indicators`)** | Evaluasi tertutup `S1`–`S5` (backtest + live) serta `S01_SWEEP` dan `S02_SNIPER` (live/paper, `has_backtest=false`) beserta ZLEMA, profil volume 48-bin, Fib, dan analog *k-NN* |
 | **Gerbang Risiko \$1 (`apex-core`)** | Perhitungan kuantitas berbasis `rust_decimal`, pita SL 2–4%, pembulatan `stepSize`/`tickSize`, dan *Volatility Shield* |
-| **Dewan 3-Agen & Arena (`apex-oms::artatrade_exec`)** | Sidang konsensus pra-eksekusi (*Vega*, *Arka*, *Wardha*) dan arena tesis arah (*Bull vs Bear*) yang bersifat *fail-closed* |
+| **Dewan Deterministik & Arena Advisory (`apex-oms::artatrade_exec`)** | Aturan deterministik pra-eksekusi (*Vega*, *Arka*, *Wardha*, `enforced=true`) dan arena tesis arah (*Bull vs Bear*, `enforced=false` / *advisory*) |
 | **Manajer Posisi / OMS (`apex-oms`)** | Pengiriman order idempoten (`MockExchange` / `BinanceLive`), pemasangan SL/TP Algo, rekonsiliasi anti-yatim, dan *Trend-Flip Guard* |
 | **StateStore & Audit (`state/`)** | Penyimpanan atomik `oms_state.json`, log *append-only* `audit.jsonl`, dan snapshot telemetri `artatrade_console.json` |
 

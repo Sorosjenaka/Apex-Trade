@@ -54,6 +54,11 @@ impl StrategyId {
     pub fn is_yahudi_scalp(&self) -> bool {
         matches!(self, StrategyId::S01Sweep | StrategyId::S02Sniper)
     }
+    /// Apakah strategi ini memiliki jalur evaluasi paritas di mesin backtest (`crates/backtest`).
+    /// S1–S5 tervalidasi lewat simulator backtest; S01/S02 saat ini hanya dipanggil di jalur live/paper.
+    pub const fn has_backtest(&self) -> bool {
+        !matches!(self, StrategyId::S01Sweep | StrategyId::S02Sniper)
+    }
     pub fn parse(s: &str) -> Option<StrategyId> {
         let u = s.trim().to_ascii_uppercase();
         match u.as_str() {
@@ -574,3 +579,23 @@ pub fn run_one(id: StrategyId, v: &View, p: &StrategyParams) -> Option<RawSignal
 }
 pub mod ofcc_watch;
 pub mod knn;
+
+
+#[cfg(test)]
+mod wp4_tests {
+    use super::StrategyId;
+
+    #[test]
+    fn has_backtest_true_for_s1_to_s5_and_false_for_s01_s02() {
+        for s in StrategyId::ALL {
+            assert!(s.has_backtest(), "{} harus punya backtest", s.code());
+        }
+        for s in StrategyId::YAHUDI_SCALP {
+            assert!(
+                !s.has_backtest(),
+                "{} belum punya jalur backtest",
+                s.code()
+            );
+        }
+    }
+}

@@ -1,6 +1,6 @@
 # Urutan = prioritas bila dua sinyal bersamaan.
 # Mode Scalping Yahudi-Bot (S01_SWEEP & S02_SNIPER) + S1_TFP (tanpa RSW Swing)
-research_entry_5m = true # hanya backtest S1/S3; regime tetap 15m/1h
+research_entry_5m = false # dibaca oleh backtest MAUPUN live (apps/apex/src/live.rs); wajib false pada demo/live
 enabled = ["S01_SWEEP", "S02_SNIPER", "S1"]
 
 # Status validasi (Rules §4.3). HANYA "GO" yang boleh mengirim order testnet/live.

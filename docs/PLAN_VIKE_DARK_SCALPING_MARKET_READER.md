@@ -2,7 +2,7 @@
 
 **Status:** PLAN / read-only design and implementation contract  
 **Primary surface:** Monitor + Command/Inspect  
-**Target project:** `C:\Users\FATHUR\Downloads\apex-scalper-rs\`  
+**Target project:** `<repo-root>/`  
 **Target URL:** `http://127.0.0.1:8787/`
 
 ## 1. Koreksi visual wajib

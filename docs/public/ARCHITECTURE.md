@@ -28,8 +28,8 @@ This document describes each subsystem in the **Apex Trade** Rust workspace: its
   - **Vega (`macro-scout`):** Enforces macro regime compatibility.
   - **Arka (`setup-judge`):** Audits composite score, `k-NN` probability, and CVD alignment.
   - **Wardha (`risk-officer`):** Validates `SL / ATR` resilience and selects the optimal structural SL/TP menu variant.
-  - Any single `NO_GO` vote with confidence `> 70` triggers an immediate hard veto; execution requires at least 2 `GO` votes and average confidence `>= 60`.
-- **Directional Battle Arena:** Pit `LONG` and `SHORT` theses against a neutral referee to prevent counter-momentum entries.
+  - Any single `NO_GO` vote with confidence `> 70` on the deterministic council triggers an immediate veto (`enforced = true`); execution requires at least 2 `GO` votes and average confidence `>= 60`. Fallback defaults are recorded in `inputs_defaulted`.
+- **Directional Battle Arena (`enforced = false`):** Computes `LONG` vs `SHORT` thesis scores as **advisory telemetry only** (logged to audit and dashboard, does not veto orders).
 
 ## 5. Order Management System & Supervision (`apex-oms`)
 

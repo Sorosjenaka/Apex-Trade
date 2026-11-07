@@ -33,11 +33,15 @@
 
 ## Tentang
 
-**Apex Trade** adalah sistem perdagangan otomatis (*high-discipline scalping engine*) berbasis **Rust** untuk pasar **Binance USDT-M Futures**, dirancang dengan tiga prinsip inti: **keselamatan modal lebih dulu, eksekusi deterministik tanpa *look-ahead*, dan setiap keputusan tercatat secara transparan**.
+> [!IMPORTANT]
+> **Status: riset — semua strategi NO-GO, belum ada edge tervalidasi.**
+> Seluruh strategi di `config/strategies.toml` (`S1`–`S5`, `S01_SWEEP`, `S02_SNIPER`) berstatus `NO-GO`; sampel forward masih kecil dan ekspektasi OOS belum stabil. Mode bawaan terkunci di `mode = "paper"` dan `arm = false` (order non-paper otomatis diblokir oleh `StrategyNotGo` dan safety gate).
 
-Sistem ini difokuskan murni pada **jalur Scalping (`SCALP`)** — tanpa strategi *swing* — bekerja penuh dari hulu ke hilir: menyaring ratusan kontrak perpetual kripto secara realtime, membaca konteks makro `BTC.D × BTC` serta mikrostruktur orderflow, membangkitkan sinyal lengkap dengan rencana masuk dan keluar presisi, memvalidasi batas risiko matematis \$1 per posisi, menyidangkan kandidat pada **Dewan Penilai 3-Agen + Arena Tesis Arah**, mengeksekusi serta mengawasi posisi terbuka secara otomatis, hingga mengevaluasi hasil lewat forensik *5-Whys* dan validasi *Combinatorial Purged Cross-Validation* (CPCV).
+**Apex Trade** adalah sistem riset dan perdagangan scalping terotomasi berbasis **Rust** untuk pasar **Binance USDT-M Futures**, dirancang dengan tiga prinsip inti: **keselamatan modal lebih dulu, eksekusi deterministik tanpa *look-ahead*, dan setiap keputusan tercatat secara transparan**.
 
-Setiap keputusan sistem — termasuk alasan pasti mengapa sebuah sinyal **dilewati atau ditolak** — ditulis ke log audit JSONL sehingga perilaku mesin selalu dapat diaudit kapan saja.
+Sistem ini difokuskan murni pada **jalur Scalping (`SCALP`)** — tanpa strategi *swing* — bekerja dari hulu ke hilir: menyaring ratusan kontrak perpetual kripto secara realtime, membaca konteks makro `BTC.D × BTC` serta mikrostruktur orderflow, membangkitkan sinyal lengkap dengan rencana masuk dan keluar presisi, memvalidasi batas risiko matematis \$1 per posisi, mengevaluasi kandidat lewat **Dewan Aturan Deterministik 3-Peran (`enforced = true`)** serta mencatat **Arena Tesis Arah sebagai telemetri *advisory* (`enforced = false`, tidak memveto)**, mengeksekusi serta mengawasi posisi terbuka di `MockExchange` (`paper`), hingga mengevaluasi hasil lewat forensik *5-Whys* berbasis bukti dan validasi *Combinatorial Purged Cross-Validation* (CPCV).
+
+Setiap keputusan sistem — termasuk alasan pasti mengapa sebuah sinyal **dilewati atau ditolak** serta input mana yang jatuh ke nilai default (`inputs_defaulted`) — ditulis ke log audit JSONL sehingga perilaku mesin selalu dapat diaudit kapan saja.
 
 ## Fitur Unggulan
 
@@ -52,9 +56,11 @@ Setiap keputusan sistem — termasuk alasan pasti mengapa sebuah sinyal **dilewa
 <details open>
 <summary><b>🧠 Mesin Sinyal Scalping Multi-Timeframe (Khusus SCALP)</b></summary>
 
-- Menggabungkan konteks makro `1h`, struktur eksekusi `15m`, dan konfirmasi momentum `5m` bersama aliran *Cumulative Volume Delta* (CVD), *Zero-Lag EMA*, profil volume 48-bin (`POC`/`VAH`/`VAL`), dan peta magnet likuidasi.
-- Mengoperasikan katalog strategi scalping terfokus: **Trend-Following Pullback (`S1_TFP`)**, **Liquidity Sweep Reclaim (`S01_SWEEP`)**, dan **Liquidity Sniper (`S02_SNIPER`)** — seluruhnya hanya membaca bar yang **sudah tertutup** (*strict closed-bar causality*).
-- Setiap sinyal lahir lengkap dengan **harga entri, pita invalidasi SL 2–4%, serta target bertingkat (1.7R–2.0R)**.
+- Menggabungkan konteks makro `1h` dan struktur eksekusi `15m` (`research_entry_5m = false` secara bawaan; konfirmasi momentum `5m` bersifat tambahan pada jalur live/paper) bersama aliran *Cumulative Volume Delta* (CVD), *Zero-Lag EMA*, profil volume 48-bin (`POC`/`VAH`/`VAL`), dan peta magnet likuidasi.
+- Menyediakan dua kelompok strategi tertutup (*strict closed-bar causality*, seluruhnya saat ini **NO-GO**):
+  - **Keluarga riset terintegrasi backtest (`has_backtest = true`):** `S1_TFP` (*Trend-Following Pullback*), `S2_LSR` (*Liquidity Sweep Reversal*), `S3_SBR` (*Structure Break Retest*), `S4_WSL` (*Wyckoff Spring/LPS*), dan `S5_RMP` (*Regime Momentum Pullback* + opsi *k-NN* kausal).
+  - **Keluarga eksperimen live/paper (`has_backtest = false`, dicatat `validated: false` di audit):** `S01_SWEEP` (*Liquidity Sweep Reclaim*) dan `S02_SNIPER` (*Liquidity Sniper*).
+- Setiap sinyal lahir lengkap dengan **harga entri, pita invalidasi SL 2–4%, serta target R-multiple terukur**.
 </details>
 
 <details open>
@@ -66,12 +72,14 @@ Setiap keputusan sistem — termasuk alasan pasti mengapa sebuah sinyal **dilewa
 </details>
 
 <details open>
-<summary><b>🤖 Dewan Penilai 3-Agen & Arena Arah (Fail-Closed)</b></summary>
+<summary><b>🤖 Dewan Aturan Deterministik 3-Peran & Arena Advisory</b></summary>
 
-- **Vega (*Macro Scout*)** — memvalidasi keselarasan posisi altcoin terhadap matriks 6-kondisi `BTC.D × BTC`.
-- **Arka (*Setup Judge*)** — mengaudit konfluensi skor setup, kemiripan analog historis (*k-NN*), dan keselarasan orderflow CVD.
-- **Wardha (*Risk Officer*)** — menguji kelayakan rasio jarak *stop-loss* terhadap ATR dan memilih varian proteksi struktural terbaik.
-- **Arena Tesis Arah (*Bull vs Bear*)** — mempertemukan tesis `LONG` dan `SHORT` di hadapan juri netral. Seluruh lapisan bersifat **fail-closed**: satu *hard veto* atau keraguan langsung membatalkan eksekusi.
+- **Dewan Pra-Entry Deterministik (`convene_deterministic_council`, `enforced = true`)** — kumpulan aturan deterministik (`if/else`, bukan agen LLM otonom) pada jalur `S01`/`S02`:
+  - **Vega (*Macro Scout*)** — mengecek keselarasan altcoin terhadap matriks 6-kondisi `BTC.D × BTC`.
+  - **Arka (*Setup Judge*)** — mengecek skor konfluensi setup, analog historis (*k-NN*), dan keselarasan orderflow CVD.
+  - **Wardha (*Risk Officer*)** — mengecek rasio jarak *stop-loss* terhadap ATR dan memilih varian menu SL struktural (`A`/`B`).
+  - Satu suara `NO_GO` berkeyakinan tinggi pada dewan membatalkan eksekusi kandidat; setiap input yang memakai fallback dicatat eksplisit pada `inputs_defaulted`.
+- **Arena Tesis Arah (*Bull vs Bear*, `enforced = false`)** — menghitung perbandingan skor tesis `LONG` lawan `SHORT` sebagai **telemetri *advisory* saja** (dicatat ke audit & dashboard, **tidak memveto** order).
 </details>
 
 <details open>
@@ -123,9 +131,9 @@ Secara ringkas, setiap kandidat scalping melewati rantai gerbang satu arah berik
 flowchart LR
     A[Pasar<br/>realtime] --> B[Scanner<br/>7-Gate]
     B --> C[Analisis MTF<br/>& Mikrostruktur]
-    C --> D[Mesin Sinyal<br/>S1 · S-01 · S-02]
+    C --> D[Mesin Sinyal<br/>S1..S5 · S01/S02]
     D --> E[Gerbang Risiko<br/>$1 · Vol Shield]
-    E --> F[Dewan 3-Agen<br/>& Arena · fail-closed]
+    E --> F[Dewan Deterministik<br/>enforced · Arena advisory]
     F --> G[Eksekusi OMS<br/>PAPER / Live GTX]
     G --> H[Pengawas Posisi<br/>& Trend-Flip]
     H --> I[Forensik 5-Whys<br/>& CPCV]
@@ -149,6 +157,7 @@ Keselamatan modal dikunci langsung di tingkat kode sumber:
 2. **Saklar eksekusi (`arm = false`) terkunci secara bawaan** di `config/engine.toml` dan tidak memiliki flag CLI untuk menyalakannya secara tidak sengaja.
 3. **Pengaman berlapis untuk mode `live`**: mesin menolak berjalan di mode nyata kecuali `arm = true`, `--mode live`, dan variabel lingkungan `APEX_LIVE_CONFIRM=I_UNDERSTAND_LIVE_ORDERS` ketiganya aktif secara bersamaan.
 4. Kunci API hanya dibaca dari variabel lingkungan proses — tidak pernah dicatat ke log, tidak ditampilkan di dashboard, dan tidak pernah disimpan di repositori.
+5. **Rute WebSocket Binance baru & host Demo:** seluruh koneksi WS telah dimigrasikan ke arsitektur rute terpisah `/public`, `/market`, dan `/private` (endpoint lama `/ws` dan `/stream` di akar host ditolak saat muat konfigurasi), dengan host demo resmi `https://demo-fapi.binance.com` (REST) dan `wss://demo-fstream.binance.com` (WS). Rincian lengkap dan rujukan dokumen resmi ada di **[docs/binance-ws-migration.md](docs/binance-ws-migration.md)**.
 
 ## Instalasi Cepat
 
@@ -184,7 +193,7 @@ Apex-Trade/
 │   ├── data/                 # Klien REST/WebSocket publik Binance (rustls), CSV & cache klines
 │   ├── market_reader/        # Deteksi rezim pasar global & konteks dominansi BTC
 │   ├── screener/             # Asset Class Guard, Volume Gate, Scanner 7-Gate, LiqMap & Orderflow Delta
-│   ├── strategies/           # Strategi scalping tertutup: S1_TFP, S01_SWEEP, S02_SNIPER & k-NN analog
+│   ├── strategies/           # Strategi tertutup: S1..S5 (backtest+live), S01_SWEEP & S02_SNIPER (live/paper) & k-NN analog
 │   ├── backtest/             # Simulator bebas look-ahead, Monte Carlo, PSR/DSR & validasi CPCV
 │   └── oms/                  # Order Management System, MockExchange, Dewan 3-Agen, Rate Guard & 5-Whys
 ├── config/                   # Konfigurasi engine.toml (arm=false), risk.toml, screener.toml, strategies.toml

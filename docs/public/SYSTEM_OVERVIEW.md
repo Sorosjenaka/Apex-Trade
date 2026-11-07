@@ -4,6 +4,8 @@
 
 The architecture is strictly dedicated to **Scalping (`SCALP`)** — no multi-day swing (`RSW`) strategies are active.
 
+> **Research Status:** All strategies (`S1`–`S5`, `S01_SWEEP`, `S02_SNIPER`) are currently marked **`NO-GO`** in `config/strategies.toml`; no validated live edge has passed gates G-01..G-11 yet.
+
 ## Design Principles
 
 - **Strict closed-bar causality.** Indicators, regime classifiers, and signal engines consume only completed bars (`5m`, `15m`, `1h`), preventing look-ahead leakage between live execution and backtesting.
@@ -17,7 +19,7 @@ The architecture is strictly dedicated to **Scalping (`SCALP`)** — no multi-da
 | Mode | Behavior |
 |---|---|
 | `PAPER` *(default)* | Full pipeline runs against live public Binance market data using `MockExchange`. Zero orders are sent to Binance. |
-| `TESTNET` | Connects to Binance Futures Demo/Testnet (`demo-fapi.binance.com`); requires `arm = true` and `GO` strategy status. |
+| `TESTNET` | Connects to Binance Futures Demo (`https://demo-fapi.binance.com`, WS `wss://demo-fstream.binance.com` using `/public`, `/market`, `/private` routes); requires `arm = true` and `GO` strategy status. |
 | `LIVE` | Connects to production Binance USDT-M (`fapi.binance.com`); gated by the triple-lock (`arm = true` + `--mode live` + `APEX_LIVE_CONFIRM`). |
 
 ## Main Rust Workspace Crates

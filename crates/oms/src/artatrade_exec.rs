@@ -643,18 +643,28 @@ pub struct CouncilVote {
     pub reasoning: String,
 }
 
+pub const DEFAULT_COMP_SCORE: u32 = 72;
+pub const DEFAULT_KNN_PROB: f64 = 0.55;
+pub const DEFAULT_ATR_PCT: f64 = 0.008;
+pub const DEFAULT_SL_PCT: f64 = 0.025;
+pub const DEFAULT_ARENA_TREND_SCORE: f64 = 72.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CouncilDecision {
+    /// Dewan benar-benar memblokir eksekusi bila `final_action != "EXECUTE"`.
+    pub enforced: bool,
     pub final_action: &'static str, // "EXECUTE" | "REJECT"
     pub consensus_level: f64,
     pub votes: Vec<CouncilVote>,
     pub summary_narrative: String,
     pub sl_choice: &'static str,
     pub tp_choice: &'static str,
+    /// Daftar nama input yang jatuh ke nilai default deterministik.
+    pub inputs_defaulted: Vec<&'static str>,
 }
 
 /// Sidang Dewan 3 Agen Pra-Entry (`Vega` macro-scout, `Arka` setup-judge, `Wardha` risk-officer)
-/// sesuai aturan `councilEngine.ts`:
+/// — aturan deterministik (`if/else`), bukan agen otonom:
 /// - Hard veto bila ada 1 vote `NO_GO` dengan `confidence > 70`
 /// - `EXECUTE` bila `goVotes >= 2` dan `avgConfidence >= 60.0`
 pub fn convene_deterministic_council(
@@ -694,7 +704,7 @@ pub fn convene_deterministic_council(
     };
 
     // 2. Arka (setup-judge)
-    let knn_val = knn_prob.unwrap_or(0.55);
+    let knn_val = knn_prob.unwrap_or(DEFAULT_KNN_PROB);
     let (arka_stance, arka_conf, arka_reason) =
         if composite_score >= 60 && cvd_aligned && knn_val >= 0.45 {
             let c = (composite_score as f64 * 0.7 + knn_val * 30.0).clamp(62.0, 95.0);
@@ -829,17 +839,25 @@ pub fn convene_deterministic_council(
     };
 
     CouncilDecision {
+        enforced: true,
         final_action,
         consensus_level: (avg_conf * 10.0).round() / 10.0,
         votes,
         summary_narrative: summary,
         sl_choice,
         tp_choice: "A",
+        inputs_defaulted: if knn_prob.is_none() {
+            vec!["knn_prob"]
+        } else {
+            Vec::new()
+        },
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DirectionBattleDecision {
+    /// Arena bersifat advisory saja (`enforced = false`); hasilnya dicatat tanpa memveto order.
+    pub enforced: bool,
     pub symbol: String,
     pub status: &'static str, // "GO" | "REJECT"
     pub winner: Option<Side>,
@@ -929,6 +947,7 @@ pub fn run_deterministic_direction_battle(
     };
 
     DirectionBattleDecision {
+        enforced: false,
         symbol: symbol.to_uppercase(),
         status,
         winner: if status == "GO" { winner } else { None },
@@ -937,6 +956,95 @@ pub fn run_deterministic_direction_battle(
         short_score,
         trend_side: t_side,
         reasons,
+    }
+}
+
+/// Masukan mentah (dengan `Option` jujur) untuk evaluasi Dewan + Arena sehingga fallback default tercatat di audit.
+pub struct CouncilArenaInputs<'a> {
+    pub symbol: &'a str,
+    pub side: Side,
+    pub entry: f64,
+    pub sl: f64,
+    pub atr_14: Option<f64>,
+    pub macro_allowed: bool,
+    pub macro_state: &'a str,
+    pub composite_score: Option<u32>,
+    pub knn_prob: Option<f64>,
+    pub cvd_aligned: bool,
+    pub arena_trend_score: Option<f64>,
+    pub macro_long_ok: bool,
+    pub macro_short_ok: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CouncilArenaEvaluation {
+    pub sl_tp_menu: Option<SlTpMenu>,
+    pub council: CouncilDecision,
+    pub battle_arena: DirectionBattleDecision,
+    pub inputs_defaulted: Vec<&'static str>,
+}
+
+/// Evaluasi Dewan (enforced=true) dan Arena (enforced=false) dengan melacak setiap input yang jatuh ke nilai default.
+/// Nilai default dipertahankan persis sama dengan kode lama agar keputusan entry 100% identik (behavior-preserving).
+pub fn evaluate_council_and_arena(inp: &CouncilArenaInputs<'_>) -> CouncilArenaEvaluation {
+    let mut defaulted: Vec<&'static str> = Vec::new();
+    let atr_pct = match inp.atr_14.filter(|&a| inp.entry > 0.0 && a > 0.0) {
+        Some(a) => a / inp.entry,
+        None => {
+            defaulted.push("atr_pct");
+            DEFAULT_ATR_PCT
+        }
+    };
+    let sl_pct = if inp.entry > 0.0 {
+        (inp.entry - inp.sl).abs() / inp.entry
+    } else {
+        defaulted.push("sl_pct");
+        DEFAULT_SL_PCT
+    };
+    let comp_score = match inp.composite_score {
+        Some(s) => s,
+        None => {
+            defaulted.push("composite_score");
+            DEFAULT_COMP_SCORE
+        }
+    };
+    if inp.knn_prob.is_none() {
+        defaulted.push("knn_prob");
+    }
+    let trend_score = match inp.arena_trend_score {
+        Some(ts) => ts,
+        None => {
+            defaulted.push("arena_trend_score");
+            DEFAULT_ARENA_TREND_SCORE
+        }
+    };
+    let sl_menu = build_sl_tp_menu_scalp(inp.entry, inp.sl, inp.side, atr_pct);
+    let sl_atr_ratio = if atr_pct > 0.0 { sl_pct / atr_pct } else { 1.0 };
+    let mut council = convene_deterministic_council(
+        inp.symbol,
+        inp.side,
+        inp.macro_allowed,
+        inp.macro_state,
+        comp_score,
+        inp.knn_prob,
+        sl_pct,
+        sl_atr_ratio,
+        inp.cvd_aligned,
+    );
+    council.inputs_defaulted = defaulted.clone();
+    let battle_arena = run_deterministic_direction_battle(
+        inp.symbol,
+        trend_score,
+        inp.side == Side::Long,
+        inp.macro_long_ok,
+        inp.macro_short_ok,
+        if inp.side == Side::Long { 1.0 } else { -1.0 },
+    );
+    CouncilArenaEvaluation {
+        sl_tp_menu: sl_menu,
+        council,
+        battle_arena,
+        inputs_defaulted: defaulted,
     }
 }
 
@@ -1615,5 +1723,220 @@ mod tests {
         );
         assert_eq!(fw.layers.len(), 5);
         assert_eq!(fw.terminated, "COMPLETE");
+    }
+
+    #[test]
+    fn council_and_arena_decisions_identical_with_default_tracking() {
+        #[allow(clippy::type_complexity)]
+        let cases: &[(
+            &str,
+            Side,
+            f64,
+            f64,
+            Option<f64>,
+            bool,
+            &str,
+            Option<u32>,
+            Option<f64>,
+            bool,
+            Option<f64>,
+            bool,
+            bool,
+        )] = &[
+            // Semua input memakai fallback default
+            (
+                "SOLUSDT",
+                Side::Long,
+                0.0,
+                0.0,
+                None,
+                true,
+                "ALT_PLAYGROUND",
+                None,
+                None,
+                true,
+                None,
+                true,
+                true,
+            ),
+            // Input lengkap (kecuali arena_trend_score None seperti jalur live saat ini)
+            (
+                "ETHUSDT",
+                Side::Short,
+                2500.0,
+                2562.5,
+                Some(22.0),
+                true,
+                "BTC_LED",
+                Some(82),
+                Some(0.68),
+                true,
+                None,
+                true,
+                true,
+            ),
+            // Hard veto makro Vega (NO_GO conf=82 > 70)
+            (
+                "XRPUSDT",
+                Side::Long,
+                0.60,
+                0.585,
+                Some(0.006),
+                false,
+                "RISK_OFF",
+                Some(85),
+                Some(0.75),
+                true,
+                Some(78.0),
+                false,
+                true,
+            ),
+            // Hard veto Wardha (SL/ATR < 0.50 -> NO_GO conf=85 > 70)
+            (
+                "DOGEUSDT",
+                Side::Long,
+                0.15,
+                0.148,
+                Some(0.006),
+                true,
+                "ALT_PLAYGROUND",
+                Some(75),
+                None,
+                true,
+                None,
+                true,
+                false,
+            ),
+            // Arka HOLD + Wardha HOLD (SL di luar pita [1.2%, 4.5%]) -> REJECT tanpa hard veto
+            (
+                "ADAUSDT",
+                Side::Short,
+                0.45,
+                0.475,
+                Some(0.004),
+                true,
+                "ALT_PLAYGROUND",
+                Some(45),
+                Some(0.35),
+                false,
+                Some(65.0),
+                true,
+                true,
+            ),
+            // Wardha memilih varian SL "B" karena sl_atr_ratio < 0.85
+            (
+                "LINKUSDT",
+                Side::Long,
+                15.0,
+                14.68,
+                Some(0.45),
+                true,
+                "ALT_PLAYGROUND",
+                None,
+                Some(0.52),
+                true,
+                None,
+                true,
+                true,
+            ),
+        ];
+
+        for &(
+            symbol,
+            side,
+            entry,
+            sl,
+            atr_14,
+            macro_allowed,
+            macro_state,
+            composite_score,
+            knn_prob,
+            cvd_aligned,
+            arena_trend_score,
+            macro_long_ok,
+            macro_short_ok,
+        ) in cases
+        {
+            // Rumus lama persis seperti live.rs sebelum WP-4c
+            let legacy_atr_pct = match atr_14 {
+                Some(a) if entry > 0.0 && a > 0.0 => a / entry,
+                _ => 0.008,
+            };
+            let legacy_sl_pct = if entry > 0.0 {
+                (entry - sl).abs() / entry
+            } else {
+                0.025
+            };
+            let legacy_ratio = if legacy_atr_pct > 0.0 {
+                legacy_sl_pct / legacy_atr_pct
+            } else {
+                1.0
+            };
+            let legacy_comp = composite_score.unwrap_or(72);
+            let legacy_council = convene_deterministic_council(
+                symbol,
+                side,
+                macro_allowed,
+                macro_state,
+                legacy_comp,
+                knn_prob,
+                legacy_sl_pct,
+                legacy_ratio,
+                cvd_aligned,
+            );
+            let legacy_battle = run_deterministic_direction_battle(
+                symbol,
+                arena_trend_score.unwrap_or(72.0),
+                side == Side::Long,
+                macro_long_ok,
+                macro_short_ok,
+                if side == Side::Long { 1.0 } else { -1.0 },
+            );
+
+            let eval = evaluate_council_and_arena(&CouncilArenaInputs {
+                symbol,
+                side,
+                entry,
+                sl,
+                atr_14,
+                macro_allowed,
+                macro_state,
+                composite_score,
+                knn_prob,
+                cvd_aligned,
+                arena_trend_score,
+                macro_long_ok,
+                macro_short_ok,
+            });
+
+            // Keputusan wajib 100% identik
+            assert!(eval.council.enforced);
+            assert!(!eval.battle_arena.enforced);
+            assert_eq!(eval.council.final_action, legacy_council.final_action);
+            assert_eq!(eval.council.consensus_level, legacy_council.consensus_level);
+            assert_eq!(eval.council.votes, legacy_council.votes);
+            assert_eq!(eval.council.sl_choice, legacy_council.sl_choice);
+            assert_eq!(eval.council.tp_choice, legacy_council.tp_choice);
+            assert_eq!(eval.battle_arena, legacy_battle);
+
+            // Pelacakan default jujur
+            assert_eq!(
+                eval.inputs_defaulted.contains(&"atr_pct"),
+                !(entry > 0.0 && atr_14.is_some_and(|a| a > 0.0))
+            );
+            assert_eq!(eval.inputs_defaulted.contains(&"sl_pct"), !(entry > 0.0));
+            assert_eq!(
+                eval.inputs_defaulted.contains(&"composite_score"),
+                composite_score.is_none()
+            );
+            assert_eq!(
+                eval.inputs_defaulted.contains(&"knn_prob"),
+                knn_prob.is_none()
+            );
+            assert_eq!(
+                eval.inputs_defaulted.contains(&"arena_trend_score"),
+                arena_trend_score.is_none()
+            );
+        }
     }
 }

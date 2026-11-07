@@ -575,6 +575,47 @@ pub struct RunOpts {
     pub once: bool,
 }
 
+/// Validasi kejujuran konfigurasi saat boot (`WP-4a`, `WP-4b`):
+/// - `research_entry_5m = true` di mode `paper` hanya mencetak `WARN`, tetapi di mode `testnet`/`live`
+///   wajib gagal start agar eksperimen 5m yang memiliki E VAL negatif tidak pernah bocor ke order bursa.
+/// - Setiap strategi `enabled` yang belum punya jalur backtest (`!has_backtest()`) atau masih `NO-GO`
+///   dilaporkan terang-terangan sebagai `WARN` saat boot.
+pub fn validate_boot_flags(cfg: &AllConfig, mode: ExecMode) -> anyhow::Result<Vec<String>> {
+    let mut warns = Vec::new();
+    if cfg.strategies.research_entry_5m {
+        if mode == ExecMode::Paper {
+            warns.push(
+                "research_entry_5m=true aktif di mode paper (eksperimen riset 5m ikut dievaluasi di jalur live/paper)"
+                    .to_string(),
+            );
+        } else {
+            anyhow::bail!(
+                "research_entry_5m=true dilarang pada mode {mode:?}; setel research_entry_5m = false di config/strategies.toml sebelum menjalankan demo/live"
+            );
+        }
+    }
+    let unvalidated: Vec<String> = cfg
+        .enabled()
+        .into_iter()
+        .filter(|&id| !id.has_backtest() || !cfg.is_go(id))
+        .map(|id| {
+            format!(
+                "{}(has_backtest={}, status={})",
+                id.code(),
+                id.has_backtest(),
+                if cfg.is_go(id) { "GO" } else { "NO-GO" }
+            )
+        })
+        .collect();
+    if !unvalidated.is_empty() {
+        warns.push(format!(
+            "strategi enabled belum tervalidasi penuh / belum GO: {}",
+            unvalidated.join(", ")
+        ));
+    }
+    Ok(warns)
+}
+
 pub async fn run(cfg: &mut AllConfig, o: RunOpts) -> anyhow::Result<()> {
     cfg.engine.mode = o.mode;
     let confirm = std::env::var(apex_oms::safety::LIVE_CONFIRM_ENV).ok();
@@ -586,6 +627,10 @@ pub async fn run(cfg: &mut AllConfig, o: RunOpts) -> anyhow::Result<()> {
             return Ok(());
         }
     };
+    let boot_warns = validate_boot_flags(cfg, mode)?;
+    for w in &boot_warns {
+        eprintln!("WARN [boot]: {w}");
+    }
     let pc = PublicClient::new(&cfg.engine.public_rest_base)?;
     let universe = cfg.universe();
     let meta = live_meta(&pc, cfg, &universe).await?;
@@ -597,6 +642,10 @@ pub async fn run(cfg: &mut AllConfig, o: RunOpts) -> anyhow::Result<()> {
     let sdir = cfg.engine.state_dir.join(sub);
     let store = StateStore::file(&sdir.join("oms_state.json"));
     let audit = apex_core::audit::AuditLog::to_file(&sdir.join("audit.jsonl"))?;
+    let boot_ts = now_ms();
+    for w in &boot_warns {
+        audit.log(boot_ts, "BOOT_WARN", serde_json::json!({"warn": w}));
+    }
     let entry_tf = if cfg.strategies.research_entry_5m {
         Tf::M5
     } else {
@@ -1538,8 +1587,18 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                 s1_cand_entry = Some(sig.entry);
                 s1_cand_sl = Some(sig.sl);
             }
+            let validated = sig.strategy.has_backtest();
             let skip = |r: &str| {
-                mgr.audit.log(now, "SKIP", serde_json::json!({"symbol": sym, "strategy": sig.strategy.code(), "reason": r}))
+                mgr.audit.log(
+                    now,
+                    "SKIP",
+                    serde_json::json!({
+                        "symbol": sym,
+                        "strategy": sig.strategy.code(),
+                        "validated": validated,
+                        "reason": r,
+                    }),
+                )
             };
             if stream_entry_blocked {
                 if is_s1 {
@@ -1594,46 +1653,38 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
                         skip(&pb_veto);
                         continue;
                     }
-                    // ArtaTrade SL/TP Menu + 3-Agent Pre-Entry Council (Vega, Arka, Wardha) + Direction Battle Arena
-                    let atr_pct = if sig.entry > 0.0 && tr.atr_14 > 0.0 {
-                        tr.atr_14 / sig.entry
-                    } else {
-                        0.008
-                    };
-                    let sl_menu =
-                        apex_oms::build_sl_tp_menu_scalp(sig.entry, sig.sl, sig.side, atr_pct);
-                    let sl_pct = if sig.entry > 0.0 {
-                        (sig.entry - sig.sl).abs() / sig.entry
-                    } else {
-                        0.025
-                    };
-                    let sl_atr_ratio = if atr_pct > 0.0 { sl_pct / atr_pct } else { 1.0 };
-                    let comp_score = scan_rows.last().map(|r| r.score).unwrap_or(72);
-                    let knn_prob_opt = scan_rows.last().and_then(|r| r.knn_prob);
-                    let council = apex_oms::convene_deterministic_council(
-                        sym,
-                        sig.side,
-                        macro_gate.altcoins_allowed || sym == "BTCUSDT" || sym == "ETHUSDT",
-                        &macro_gate.macro_bias,
-                        comp_score,
-                        knn_prob_opt,
-                        sl_pct,
-                        sl_atr_ratio,
-                        cvd_ok,
-                    );
-                    let battle = apex_oms::run_deterministic_direction_battle(
-                        sym,
-                        72.0,
-                        sig.side == Side::Long,
-                        dec.long_ok || macro_gate.macro_bias != "RISK_OFF",
-                        dec.short_ok || macro_gate.macro_bias != "RISK_OFF",
-                        if sig.side == Side::Long { 1.0 } else { -1.0 },
-                    );
+                    // ArtaTrade SL/TP Menu + 3-Agent Pre-Entry Council (deterministik, enforced=true)
+                    // + Direction Battle Arena (advisory, enforced=false) dengan pelacakan input default jujur.
+                    let eval =
+                        apex_oms::evaluate_council_and_arena(&apex_oms::CouncilArenaInputs {
+                            symbol: sym,
+                            side: sig.side,
+                            entry: sig.entry,
+                            sl: sig.sl,
+                            atr_14: (tr.atr_14 > 0.0).then_some(tr.atr_14),
+                            macro_allowed: macro_gate.altcoins_allowed
+                                || sym == "BTCUSDT"
+                                || sym == "ETHUSDT",
+                            macro_state: &macro_gate.macro_bias,
+                            composite_score: scan_rows.last().map(|r| r.score),
+                            knn_prob: scan_rows.last().and_then(|r| r.knn_prob),
+                            cvd_aligned: cvd_ok,
+                            arena_trend_score: None,
+                            macro_long_ok: dec.long_ok || macro_gate.macro_bias != "RISK_OFF",
+                            macro_short_ok: dec.short_ok || macro_gate.macro_bias != "RISK_OFF",
+                        });
+                    let sl_menu = eval.sl_tp_menu;
+                    let council = eval.council;
+                    let battle = eval.battle_arena;
+                    let inputs_defaulted = eval.inputs_defaulted;
                     let council_json = serde_json::json!({
                         "ts": now,
                         "symbol": sym,
                         "strategy": sig.strategy.code(),
+                        "validated": validated,
                         "side": format!("{:?}", sig.side),
+                        "enforced": council.enforced,
+                        "inputs_defaulted": inputs_defaulted,
                         "sl_tp_menu": sl_menu,
                         "council": council,
                         "battle_arena": battle,
@@ -2091,5 +2142,29 @@ mod reversal_shadow_tests {
         assert!(summary.contains("S1_TRACE"));
         assert!(summary.contains("symbol=ETHUSDT"));
         assert!(summary.contains("stop_at="));
+    }
+
+    #[test]
+    fn boot_flags_warn_in_paper_and_reject_research_5m_in_non_paper() {
+        let mut cfg = AllConfig::load(std::path::Path::new("../../config")).unwrap();
+        assert!(
+            !cfg.strategies.research_entry_5m,
+            "default config wajib research_entry_5m = false"
+        );
+        let warns_default = validate_boot_flags(&cfg, ExecMode::Paper).unwrap();
+        assert!(
+            warns_default
+                .iter()
+                .any(|w| w.contains("S01_SWEEP(has_backtest=false")),
+            "boot wajib memperingatkan strategi tanpa backtest: {warns_default:?}"
+        );
+
+        cfg.strategies.research_entry_5m = true;
+        let warns_paper = validate_boot_flags(&cfg, ExecMode::Paper).unwrap();
+        assert!(warns_paper
+            .iter()
+            .any(|w| w.contains("research_entry_5m=true")));
+        assert!(validate_boot_flags(&cfg, ExecMode::Testnet).is_err());
+        assert!(validate_boot_flags(&cfg, ExecMode::Live).is_err());
     }
 }

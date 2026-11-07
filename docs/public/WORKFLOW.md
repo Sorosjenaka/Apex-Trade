@@ -13,7 +13,7 @@ This document outlines the operational cycle of **Apex Trade** from market inges
 
 1. **Signal Generation:** Closed-bar scalping strategies (`S1_TFP`, `S01_SWEEP`, `S02_SNIPER`) emit directional candidates with structural invalidation stops and target R-multiples.
 2. **Risk Gate:** Exact-decimal `$1.00` position sizing rounds quantity to exchange `stepSize` and verifies that actual risk, `2%–4%` stop distance, max open positions, and daily stop rules pass.
-3. **3-Agent Council & Battle Arena:** `Vega`, `Arka`, and `Wardha` vote on the setup; only unanimous/majority `EXECUTE` verdicts with zero high-confidence vetoes proceed.
+3. **Deterministic 3-Role Council (`enforced = true`) & Advisory Arena (`enforced = false`):** Deterministic rule functions (`Vega`, `Arka`, and `Wardha`) evaluate the setup while recording any defaulted inputs; Arena scores are logged strictly as advisory telemetry without blocking execution.
 4. **Order Placement:** `OrderManager` writes state to `oms_state.json` and dispatches the order (`MockExchange` in `PAPER`, or `LIMIT GTX` in armed `LIVE`).
 
 ## 3. Supervision & Post-Mortem Learning
