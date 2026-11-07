@@ -2,13 +2,18 @@
 //! Default AMAN: mode=paper, arm=false. Tidak ada flag CLI untuk ARM (hanya config/engine.toml).
 mod bt;
 mod cfg;
+mod forward_gate_cmd;
 mod live;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "apex", version, about = "Apex Scalper RS — Binance USDⓈ-M scalper (paper default, ARM=false)")]
+#[command(
+    name = "apex",
+    version,
+    about = "Apex Scalper RS — Binance USDⓈ-M scalper (paper default, ARM=false)"
+)]
 struct Cli {
     /// folder config (engine.toml, risk.toml, screener.toml, strategies.toml, blacklist.json)
     #[arg(long, global = true, default_value = "config")]
@@ -108,20 +113,59 @@ enum Cmd {
     },
     /// Status state OMS + kill switch
     Status,
+    /// Evaluasi gerbang forward GR-9 (--stage demo|shadow --since YYYY-MM-DD)
+    ForwardGate {
+        /// demo | shadow
+        #[arg(long)]
+        stage: String,
+        /// Tanggal awal pengamatan UTC (YYYY-MM-DD)
+        #[arg(long)]
+        since: String,
+        /// Opsional override path forward_gate.toml
+        #[arg(long)]
+        gate_config: Option<PathBuf>,
+        /// Opsional override path trades_telemetry.jsonl
+        #[arg(long)]
+        telemetry: Option<PathBuf>,
+        /// Opsional override path audit.jsonl
+        #[arg(long)]
+        audit: Option<PathBuf>,
+    },
 }
 
 fn to_bt(o: BtOpts) -> bt::BtArgs {
-    bt::BtArgs { from: o.from, to: o.to, strategies: o.strategies, data: o.data, out: o.out, regime: o.regime, stress: o.stress, unlock_holdout: o.unlock_holdout, filters: o.filters, no_volume_gate: o.no_volume_gate, gates_only: o.gates_only }
+    bt::BtArgs {
+        from: o.from,
+        to: o.to,
+        strategies: o.strategies,
+        data: o.data,
+        out: o.out,
+        regime: o.regime,
+        stress: o.stress,
+        unlock_holdout: o.unlock_holdout,
+        filters: o.filters,
+        no_volume_gate: o.no_volume_gate,
+        gates_only: o.gates_only,
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into())).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        )
+        .init();
     apex_data::init_tls();
     let cli = Cli::parse();
     let mut cfg = cfg::AllConfig::load(&cli.config)?;
     match cli.cmd {
-        Cmd::Fetch { from, to, data, only_5m } => live::fetch(&cfg, &data, &from, &to, only_5m).await,
+        Cmd::Fetch {
+            from,
+            to,
+            data,
+            only_5m,
+        } => live::fetch(&cfg, &data, &from, &to, only_5m).await,
         Cmd::Reader => live::reader(&cfg).await,
         Cmd::Screen { top } => live::screen(&cfg, top).await,
         Cmd::Backtest { o, per_strategy } => bt::backtest(&cfg, &to_bt(o), per_strategy),
@@ -131,30 +175,88 @@ async fn main() -> anyhow::Result<()> {
             let mode: apex_core::Mode = mode.parse().map_err(|e: String| anyhow::anyhow!(e))?;
             live::run(&mut cfg, live::RunOpts { mode, once }).await
         }
-        Cmd::Kill { release, flatten, reason } => {
+        Cmd::Kill {
+            release,
+            flatten,
+            reason,
+        } => {
             let k = apex_oms::killswitch::KillSwitch::new(&cfg.engine.kill_file);
             if release {
                 k.release()?;
                 println!("kill switch DILEPAS ({})", k.path().display());
             } else {
-                k.engage(&format!("{}{}", if flatten { "FLATTEN " } else { "" }, reason))?;
-                println!("kill switch AKTIF ({}) — entry baru diblokir{}", k.path().display(), if flatten { ", engine akan flatten posisi" } else { "" });
+                k.engage(&format!(
+                    "{}{}",
+                    if flatten { "FLATTEN " } else { "" },
+                    reason
+                ))?;
+                println!(
+                    "kill switch AKTIF ({}) — entry baru diblokir{}",
+                    k.path().display(),
+                    if flatten {
+                        ", engine akan flatten posisi"
+                    } else {
+                        ""
+                    }
+                );
             }
             Ok(())
         }
         Cmd::Status => {
             let k = apex_oms::killswitch::KillSwitch::new(&cfg.engine.kill_file);
-            println!("mode config={:?} arm={} | kill={}", cfg.engine.mode, cfg.engine.arm, if k.is_engaged() { format!("AKTIF: {}", k.reason().unwrap_or_default()) } else { "off".into() });
+            println!(
+                "mode config={:?} arm={} | kill={}",
+                cfg.engine.mode,
+                cfg.engine.arm,
+                if k.is_engaged() {
+                    format!("AKTIF: {}", k.reason().unwrap_or_default())
+                } else {
+                    "off".into()
+                }
+            );
             for sub in ["paper", "testnet", "live"] {
                 let p = cfg.engine.state_dir.join(sub).join("oms_state.json");
                 if !p.exists() {
                     continue;
                 }
-                let b: apex_oms::manager::Book = serde_json::from_str(&std::fs::read_to_string(&p)?)?;
+                let b: apex_oms::manager::Book =
+                    serde_json::from_str(&std::fs::read_to_string(&p)?)?;
                 println!("[{sub}] aktif={} selesai={} SL hari ini={} pnl hari ini=${:.2} cooldown s/d {}", b.trades.len(), b.closed.len(), b.risk.daily_sl_count, b.risk.daily_realized_net, apex_core::time::fmt_utc(b.risk.cooldown_until));
                 for t in b.trades.values() {
-                    println!("   {} {} {:?} {:?} qty={} sl={} tp={} {}", t.client_id, t.symbol, t.side, t.state, t.filled_qty, t.sl, t.tp, t.last_error.clone().unwrap_or_default());
+                    println!(
+                        "   {} {} {:?} {:?} qty={} sl={} tp={} {}",
+                        t.client_id,
+                        t.symbol,
+                        t.side,
+                        t.state,
+                        t.filled_qty,
+                        t.sl,
+                        t.tp,
+                        t.last_error.clone().unwrap_or_default()
+                    );
                 }
+            }
+            Ok(())
+        }
+        Cmd::ForwardGate {
+            stage,
+            since,
+            gate_config,
+            telemetry,
+            audit,
+        } => {
+            let pass = forward_gate_cmd::run_forward_gate(
+                &cfg,
+                &forward_gate_cmd::ForwardGateOpts {
+                    stage,
+                    since,
+                    gate_config,
+                    telemetry,
+                    audit,
+                },
+            )?;
+            if !pass {
+                std::process::exit(1);
             }
             Ok(())
         }

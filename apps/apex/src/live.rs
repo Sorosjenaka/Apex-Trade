@@ -816,6 +816,13 @@ async fn run_loop<E: FuturesExchange + Feed>(
             mgr.on_event(ev, now).await;
         }
     }
+    let go_set: std::collections::BTreeSet<String> = apex_strategies::StrategyId::ALL
+        .iter()
+        .copied()
+        .filter(|&id| cfg.is_go(id))
+        .map(|id| id.code().to_string())
+        .collect();
+    mgr.set_go_strategies(go_set);
     mgr.boot(now).await?;
     let ids = cfg.enabled();
     let mut vg = VolumeGateTracker::default();

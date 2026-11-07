@@ -1,0 +1,41 @@
+# Ambang Gerbang Forward Testing sebelum ARM Mainnet (`WP-8`).
+# Disalin dari `docs/plan/Rules.md`:
+# - Baris 16 (GR-8): SL wajib terkonfirmasi <= 2.000 ms setelah fill (`max_unprotected_ms = 2000`).
+# - Baris 17 (GR-9): "testnet >= 14 hari / >= 30 trade -> mainnet shadow >= 7 hari -> ARM mainnet".
+#   Catatan terminologi: Binance memigrasikan Futures Testnet ke Demo Trading (`demo-fapi.binance.com`),
+#   sehingga CLI memakai `--stage demo` untuk tahap yang disebut `testnet` di `Rules.md`.
+# - Baris 86 (§4.3): "Forward | testnet >= 14 hari + shadow mainnet >= 7 hari | paritas eksekusi".
+# - Baris 108 (§4.3): "Gerbang forward (sebelum ARM mainnet): testnet >= 30 trade,
+#   mean(realized_slip_R - model_slip_R) <= 0,05R, 0 SL_MISSING, 0 RULE_VIOLATION."
+#
+# Parameter tambahan (`max_orphan_positions`, `min_uptime_pct`, `max_heartbeat_gap_secs`,
+# `max_unfilled_ws_gaps`) adalah penjaga telemetri operasional forward testing karena `Rules.md`
+# tidak menetapkan angka eksplisit untuk uptime dan celah WS.
+
+[demo]
+min_days = 14.0
+min_trades = 30
+enforce_slip_diff = true
+max_mean_slip_diff_r = 0.05
+max_sl_missing = 0
+max_rule_violation = 0
+max_unprotected_ms = 2000
+max_orphan_positions = 0
+min_uptime_pct = 95.0
+max_heartbeat_gap_secs = 1800
+max_unfilled_ws_gaps = 0
+
+[shadow]
+min_days = 7.0
+min_trades = 0
+# Shadow menjalankan mode paper di atas data publik mainnet; fill dimodelkan sehingga
+# slippage eksekusi tidak diuji pada tahap ini (diuji pada tahap `demo`).
+enforce_slip_diff = false
+max_mean_slip_diff_r = 0.05
+max_sl_missing = 0
+max_rule_violation = 0
+max_unprotected_ms = 2000
+max_orphan_positions = 0
+min_uptime_pct = 95.0
+max_heartbeat_gap_secs = 1800
+max_unfilled_ws_gaps = 0

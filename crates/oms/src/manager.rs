@@ -178,6 +178,8 @@ pub struct OrderManager<E: FuturesExchange> {
     pub max_backoff_ms: u64,
     /// penghitung kegagalan simpan berturut-turut pada transisi pasca-entry (>=3 memicu kill switch)
     pub consecutive_save_failures: u32,
+    /// pelacak invarian R1..R8 beserta deduplikasi audit `RULE_VIOLATION`
+    pub invariant_state: crate::invariants::ExchangeInvariantState,
 }
 
 macro_rules! rl {
@@ -256,7 +258,41 @@ impl<E: FuturesExchange> OrderManager<E> {
             filters,
             max_backoff_ms: 30_000,
             consecutive_save_failures: 0,
+            invariant_state: crate::invariants::ExchangeInvariantState::new(mode),
         })
+    }
+
+    pub fn set_go_strategies(&mut self, go: BTreeSet<String>) {
+        self.invariant_state.go_strategies = go;
+    }
+
+    async fn audit_invariants(&mut self, now: Ms) {
+        self.invariant_state.now_ms = now;
+        let killed = self.kill.is_engaged();
+        self.invariant_state.kill_engaged = killed;
+        if killed {
+            self.invariant_state.kill_since_ms.get_or_insert(now);
+        } else {
+            self.invariant_state.kill_since_ms = None;
+        }
+        if let Ok(pos) = self.ex.positions().await {
+            self.invariant_state.positions = pos;
+        }
+        if let Ok(algos) = self.ex.open_algo_orders().await {
+            self.invariant_state.algos = algos;
+        }
+        let violations = crate::invariants::check_rule_invariants(
+            &self.book,
+            &self.risk_cfg,
+            &mut self.invariant_state,
+        );
+        for v in violations {
+            self.audit.log(
+                now,
+                "RULE_VIOLATION",
+                json!({"rule": v.rule, "trade_id": v.trade_id, "detail": v.detail}),
+            );
+        }
     }
 
     pub fn with_notifier(mut self, notifier: Arc<dyn Notifier>) -> Self {
@@ -1320,12 +1356,15 @@ impl<E: FuturesExchange> OrderManager<E> {
                 _ => {}
             }
         }
+        self.audit_invariants(now).await;
         self.save_or_kill(now).await;
     }
 
     /// Kill switch: tulis file, batalkan pending, opsional flatten semua, dan kirim notifikasi.
     pub async fn engage_kill(&mut self, reason: &str, flatten: bool, now: Ms) {
         let _ = self.kill.engage(reason);
+        self.invariant_state.kill_engaged = true;
+        self.invariant_state.kill_since_ms.get_or_insert(now);
         self.audit.log(
             now,
             "KILL_ENGAGED",
@@ -1577,6 +1616,22 @@ impl<E: FuturesExchange> OrderManager<E> {
                     json!({"algo_id": a.algo_id, "symbol": a.symbol}),
                 );
             }
+        }
+        self.invariant_state.positions = positions;
+        self.invariant_state.algos = algos;
+        self.invariant_state.now_ms = now;
+        self.invariant_state.kill_engaged = self.kill.is_engaged();
+        let violations = crate::invariants::check_rule_invariants(
+            &self.book,
+            &self.risk_cfg,
+            &mut self.invariant_state,
+        );
+        for v in violations {
+            self.audit.log(
+                now,
+                "RULE_VIOLATION",
+                json!({"rule": v.rule, "trade_id": v.trade_id, "detail": v.detail}),
+            );
         }
         self.save_or_kill(now).await;
         Ok(())
