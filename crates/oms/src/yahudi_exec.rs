@@ -2,11 +2,13 @@
 //! dari `Yahudi-Bot` (`SCALP` Mode).
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use apex_core::types::Ms;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::store::{StateStore, StoreError};
 use crate::telemetry::TradeTelemetry;
 
 // ============================================================================
@@ -243,6 +245,14 @@ impl Default for PlaybookEngine {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaybookCountsSnapshot {
+    pub updated_ms: Ms,
+    pub mistake_counts: BTreeMap<String, u32>,
+    /// Proposal aturan untuk tinjauan manusia; tidak pernah mengubah PB-01..03 otomatis (`WP-7d`).
+    pub proposals: Vec<String>,
+}
+
 impl PlaybookEngine {
     pub fn record_mistake(&mut self, tag: MistakeTag) {
         if tag == MistakeTag::None {
@@ -252,6 +262,38 @@ impl PlaybookEngine {
             .mistake_counts
             .entry(tag.as_str().to_string())
             .or_insert(0) += 1;
+    }
+
+    pub fn build_counts_snapshot(&self, now_ms: Ms) -> PlaybookCountsSnapshot {
+        let proposals = self
+            .mistake_counts
+            .iter()
+            .filter(|(_, &cnt)| cnt >= 3)
+            .map(|(tag, &cnt)| {
+                format!(
+                    "HIPOTESIS PLAYBOOK ({tag}={cnt}x): tinjau lewat apex review & uji pra-registrasi di apex validate (PB-01..03 tidak diubah otomatis)."
+                )
+            })
+            .collect();
+        PlaybookCountsSnapshot {
+            updated_ms: now_ms,
+            mistake_counts: self.mistake_counts.clone(),
+            proposals,
+        }
+    }
+
+    pub fn save_counts(&self, path: &Path, now_ms: Ms) -> Result<(), StoreError> {
+        let snap = self.build_counts_snapshot(now_ms);
+        StateStore::file(path).save(&snap)
+    }
+
+    pub fn load_counts(&mut self, path: &Path) -> Result<(), StoreError> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let snap: PlaybookCountsSnapshot = StateStore::file(path).load_with_recovery()?.value;
+        self.mistake_counts = snap.mistake_counts;
+        Ok(())
     }
 
     /// Evaluasi Playbook If-Then di hot-path sebelum mengeksekusi sinyal entry.

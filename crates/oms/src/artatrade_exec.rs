@@ -174,6 +174,8 @@ pub fn plan_live_ladder(
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProgressiveThresholds {
+    /// Hanya dipakai untuk telemetri konsol operator, tidak pernah menjadi gate order (`WP-7c`).
+    pub advisory: bool,
     pub level: u8,
     pub min_score: u32,
     pub min_knn: f64,
@@ -193,6 +195,7 @@ pub struct ProgressiveThresholds {
 pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
     match level {
         0 => ProgressiveThresholds {
+            advisory: true,
             level: 0,
             min_score: 45,
             min_knn: 0.0,
@@ -210,6 +213,7 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
                 "MODE EKSPLORASI L0: nilai SEMUA kandidat MTF segar + volume OK. Ambang lunak 45.",
         },
         1 => ProgressiveThresholds {
+            advisory: true,
             level: 1,
             min_score: 50,
             min_knn: 0.0,
@@ -227,6 +231,7 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
                 "MODE EKSPLORASI L1: ambang lunak 50. Pilih yang konfluensinya paling meyakinkan.",
         },
         2 => ProgressiveThresholds {
+            advisory: true,
             level: 2,
             min_score: 55,
             min_knn: 0.40,
@@ -244,6 +249,7 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
                 "MODE TRANSISI L2: ambang 55. Mulai selektif; sideways hanya bila bukti tren kuat.",
         },
         3 => ProgressiveThresholds {
+            advisory: true,
             level: 3,
             min_score: 60,
             min_knn: 0.50,
@@ -260,6 +266,7 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
             directive: "MODE PENGETATAN L3: ambang 60. Kualitas di atas kuantitas.",
         },
         4 => ProgressiveThresholds {
+            advisory: true,
             level: 4,
             min_score: 64,
             min_knn: 0.55,
@@ -276,6 +283,7 @@ pub fn progressive_thresholds_for(level: u8) -> ProgressiveThresholds {
             directive: "MODE HAMPIR DISIPLIN L4: ambang 64. Hanya setup rapi yang GO.",
         },
         _ => ProgressiveThresholds {
+            advisory: true,
             level: 5,
             min_score: 68,
             min_knn: 0.55,
@@ -1375,6 +1383,19 @@ pub fn summarize_observed_probability(pnls_usd: &[f64]) -> ObservedProbabilitySu
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TunerDecision {
+    NoProposal {
+        reason: String,
+    },
+    ReviewRecommended {
+        sample_count: usize,
+        mean_r: f64,
+        ci95_r: (f64, f64),
+        win_rate_pct: f64,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BoundedTunerProposal {
     pub param: &'static str,
@@ -1382,46 +1403,90 @@ pub struct BoundedTunerProposal {
     pub to: f64,
     pub bounded_pct: f64,
     pub status: &'static str,
+    pub reason: String,
     pub rationale: String,
+    pub decision: TunerDecision,
 }
 
-/// Proposal penyetelan parameter bounded `<= 10%` (`strategyTuner.ts:proposeTuning`).
+/// Evaluasi jujur tuner telemetri (`WP-7b`):
+/// - Tidak pernah mengusulkan delta parameter numerik otomatis (`from == to`, `bounded_pct == 0.0`).
+/// - Mengembalikan `NoProposal` kecuali `sample_count >= 100` **dan** CI 95% `E[R]` tidak mencakup `0`.
 pub fn propose_bounded_tuning(
     strategy_id: &str,
     current_val: f64,
     sample_count: usize,
     win_rate_pct: f64,
+    mean_r: Option<f64>,
+    ci95_er: Option<(f64, f64)>,
 ) -> BoundedTunerProposal {
     let param = if strategy_id == "S-02" || strategy_id == "S02_SNIPER" {
         "pullBiasThreshold"
     } else {
         "tp1R"
     };
-    if sample_count < 30 {
+    if sample_count < 100 {
+        let reason = format!(
+            "INSUFFICIENT_SAMPLES: n={} (<100); adaptasi parameter pada sampel kecil berisiko overfit.",
+            sample_count
+        );
         return BoundedTunerProposal {
             param,
             from: current_val,
             to: current_val,
             bounded_pct: 0.0,
-            status: "CANDIDATE",
-            rationale: format!(
-                "WAITING_FOR_COHORT_SAMPLES: sampel tertutup baru {} (<30); parameter {} dikunci di {:.3}.",
-                sample_count, param, current_val
-            ),
+            status: "NO_PROPOSAL",
+            reason: reason.clone(),
+            rationale: reason.clone(),
+            decision: TunerDecision::NoProposal { reason },
         };
     }
-    let delta_pct = if win_rate_pct < 50.0 { 0.05 } else { 0.0 };
-    let to = ((current_val * (1.0 + delta_pct)) * 1000.0).round() / 1000.0;
+    let Some((er, (lo, hi))) = mean_r.zip(ci95_er) else {
+        let reason = "CI95_UNAVAILABLE: interval kepercayaan E[R] belum tersedia.".to_string();
+        return BoundedTunerProposal {
+            param,
+            from: current_val,
+            to: current_val,
+            bounded_pct: 0.0,
+            status: "NO_PROPOSAL",
+            reason: reason.clone(),
+            rationale: reason.clone(),
+            decision: TunerDecision::NoProposal { reason },
+        };
+    };
+    if lo <= 0.0 && hi >= 0.0 {
+        let reason = format!(
+            "CI95_INCLUDES_ZERO: n={}, E[R]={:+.4}R dengan CI95 [{:+.4}R, {:+.4}R] mencakup 0.",
+            sample_count, er, lo, hi
+        );
+        return BoundedTunerProposal {
+            param,
+            from: current_val,
+            to: current_val,
+            bounded_pct: 0.0,
+            status: "NO_PROPOSAL",
+            reason: reason.clone(),
+            rationale: reason.clone(),
+            decision: TunerDecision::NoProposal { reason },
+        };
+    }
+    let reason = format!(
+        "REVIEW_RECOMMENDED: n={}, WR={:.1}%, E[R]={:+.4}R (CI95 [{:+.4}R, {:+.4}R]); tinjau manual lewat apex review & apex validate tanpa delta otomatis.",
+        sample_count, win_rate_pct, er, lo, hi
+    );
     BoundedTunerProposal {
         param,
         from: current_val,
-        to,
-        bounded_pct: delta_pct * 100.0,
-        status: if delta_pct > 0.0 { "CANDIDATE" } else { "ACTIVE" },
-        rationale: format!(
-            "Cohort n={}, WR={:.1}%: perubahan bounded {:.1}% (<=10%) pada {} ({:.3} -> {:.3}); wajib lulus gate replay OOS.",
-            sample_count, win_rate_pct, delta_pct * 100.0, param, current_val, to
-        ),
+        to: current_val,
+        bounded_pct: 0.0,
+        status: "REVIEW_RECOMMENDED",
+        reason: reason.clone(),
+        rationale: reason,
+        decision: TunerDecision::ReviewRecommended {
+            sample_count,
+            mean_r: er,
+            ci95_r: (lo, hi),
+            win_rate_pct,
+        },
     }
 }
 

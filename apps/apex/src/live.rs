@@ -779,6 +779,10 @@ fn sync_closed_trades<E: FuturesExchange>(
             .on_trade_closed(&ct.symbol, closed_ts, pnl, &reason, cfg.risk.risk_usd);
         let mistake = apex_oms::classify_trade_mistake(&tel);
         st.playbook.record_mistake(mistake);
+        let _ = st.playbook.save_counts(
+            &cfg.engine.state_dir.join("playbook_counts.json"),
+            closed_ts,
+        );
         let five_whys = apex_oms::build_five_whys_with_gate(&tel, to_dec(cfg.risk.max_spread_bps));
         if let Some(prop) = five_whys.as_ref().and_then(|fw| fw.proposal.as_ref()) {
             let _ =
@@ -829,6 +833,7 @@ async fn run_loop<E: FuturesExchange + Feed>(
     let mut watches: BTreeMap<String, apex_strategies::ofcc_watch::S1Watch> = BTreeMap::new();
     let mut yahudi_cooldown = apex_oms::YahudiCooldownGuard::default();
     let mut playbook = apex_oms::PlaybookEngine::default();
+    let _ = playbook.load_counts(&cfg.engine.state_dir.join("playbook_counts.json"));
     let mut trend_flip_guard = apex_oms::TrendFlipConfirmationGuard::default();
     let mut rate_guard = apex_oms::BinanceRateGuard::default();
     let mut last_m15_by_symbol: BTreeMap<String, Vec<Bar>> = BTreeMap::new();
@@ -2026,17 +2031,39 @@ async fn on_bar_close<E: FuturesExchange + Feed>(
     let prog_level =
         apex_oms::resolve_auto_progressive_level(prob_summary.sample_count, wr_frac, exp_usd);
     let prog_policy = apex_oms::progressive_thresholds_for(prog_level);
+    let closed_r_blocks: Vec<(i64, f64)> = mgr
+        .book
+        .closed
+        .iter()
+        .filter_map(|t| {
+            let pnl = t.pnl_net.filter(|x| x.is_finite())?;
+            let r = if t.planned_risk > rust_decimal::Decimal::ZERO {
+                pnl / to_f64(t.planned_risk)
+            } else {
+                pnl
+            };
+            Some((t.closed_ms.unwrap_or(t.created_ms), r))
+        })
+        .collect();
+    let (mean_r_obs, ci95_er_obs) =
+        crate::review_stats::iso_week_block_bootstrap_ci95(&closed_r_blocks, 2_000)
+            .map(|(m, ci, _)| (Some(m), ci))
+            .unwrap_or((None, None));
     let tuner_s01 = apex_oms::propose_bounded_tuning(
         "S-01",
         cfg.strategies.params.scalp_rr,
         prob_summary.sample_count,
         prob_summary.observed_win_rate_pct.unwrap_or(0.0),
+        mean_r_obs,
+        ci95_er_obs,
     );
     let tuner_s02 = apex_oms::propose_bounded_tuning(
         "S-02",
         0.55,
         prob_summary.sample_count,
         prob_summary.observed_win_rate_pct.unwrap_or(0.0),
+        mean_r_obs,
+        ci95_er_obs,
     );
     let universe_tickers: Vec<(String, f64)> = meta
         .metrics

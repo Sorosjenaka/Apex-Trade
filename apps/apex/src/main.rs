@@ -4,6 +4,10 @@ mod bt;
 mod cfg;
 mod forward_gate_cmd;
 mod live;
+mod review_cmd;
+mod review_stats;
+#[cfg(test)]
+mod review_tests;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -113,6 +117,27 @@ enum Cmd {
     },
     /// Status state OMS + kill switch
     Status,
+    /// Laporan evaluasi berkala dari telemetri nyata (+ sidecar JSON)
+    Review {
+        /// Tanggal awal UTC inklusif (YYYY-MM-DD)
+        #[arg(long)]
+        since: String,
+        /// Tanggal akhir UTC eksklusif (YYYY-MM-DD)
+        #[arg(long)]
+        until: Option<String>,
+        /// Filter kode strategi (mis. S1)
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Path laporan Markdown keluaran (.json dibuat otomatis berdampingan)
+        #[arg(long)]
+        out: PathBuf,
+        /// Opsional override path trades_telemetry.jsonl
+        #[arg(long)]
+        telemetry: Option<PathBuf>,
+        /// Opsional override path audit.jsonl
+        #[arg(long)]
+        audit: Option<PathBuf>,
+    },
     /// Evaluasi gerbang forward GR-9 (--stage demo|shadow --since YYYY-MM-DD)
     ForwardGate {
         /// demo | shadow
@@ -236,6 +261,27 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            Ok(())
+        }
+        Cmd::Review {
+            since,
+            until,
+            strategy,
+            out,
+            telemetry,
+            audit,
+        } => {
+            review_cmd::run_review(
+                &cfg,
+                &review_cmd::ReviewOpts {
+                    since,
+                    until,
+                    strategy,
+                    out,
+                    telemetry,
+                    audit,
+                },
+            )?;
             Ok(())
         }
         Cmd::ForwardGate {
